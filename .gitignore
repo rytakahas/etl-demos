@@ -1,0 +1,39 @@
+# OS cruft
+.DS_Store
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtualenvs
+.venv/
+.env*/
+venv/
+
+# Local env & secrets
+.env
+dev.env
+include/gcp-dbt-sa.json
+
+# Airflow logs (if you add a logs dir later)
+logs/
+airflow_logs/
+
+# dbt artifacts
+dbt/target/
+dbt/logs/
+dbt/manifest.json
+dbt/run_results.json
+dbt/graph.gpickle
+dbt/graph_summary.json
+dbt/partial_parse.msgpack
+dbt/semantic_manifest.json
+
+# Pytest / coverage (if you add them later)
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Astro / Docker intermediate stuff (if present)
+.astro/

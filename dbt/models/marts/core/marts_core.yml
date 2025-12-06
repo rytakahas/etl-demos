@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: dim_customer
+    columns:
+      - name: customer_key
+        tests: [not_null, unique]
+  - name: dim_product
+    columns:
+      - name: product_key
+        tests: [not_null, unique]
+  - name: f_loan_contract
+    columns:
+      - name: loan_id
+        tests: [not_null, unique]

@@ -1,0 +1,14 @@
+name: "bank_dwh_demo"
+version: "1.0.0"
+profile: "bank_dwh_bigquery"
+
+models:
+  bank_dwh_demo:
+    +materialized: view
+    staging:
+      +schema: staging
+      +tags: ["staging"]
+    marts:
+      core:
+        +schema: core
+        +tags: ["mart"]

@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: raw
+    database: vivid-layout-453307-p4
+    schema: ryoji_raw_demos
+    tables:
+      - name: loan_applications_raw
+      - name: customers_raw
+      - name: payments_raw
+
+models:
+  - name: stg_corebank_loans
+    columns:
+      - name: loan_id
+        tests: [not_null, unique]
+      - name: customer_id
+        tests: [not_null]
+  - name: stg_corebank_customers
+    columns:
+      - name: customer_id
+        tests: [not_null, unique]
+  - name: stg_payments
+    columns:
+      - name: loan_id
+        tests: [not_null]
+      - name: payment_date
+        tests: [not_null]
