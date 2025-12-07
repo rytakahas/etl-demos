@@ -43,4 +43,3 @@ with_keys as (
 )
 
 select * from with_keys
-

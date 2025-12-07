@@ -1,25 +1,30 @@
 {{ config(materialized='view') }}
 
-with base as (
-  select
-    customer_id,
-    date_of_birth_raw      as date_of_birth,
-    employment_type,
-    state_id,
-    current_pincode_id
-  from {{ ref('stg_corebank_loans') }}
+with src as (
+  select * from {{ source('raw', 'loan_applications_raw') }}
 ),
 
-dedup as (
+deduped as (
   select
-    customer_id,
-    any_value(date_of_birth)      as date_of_birth,
-    any_value(employment_type)    as employment_type,
-    any_value(state_id)           as state_id,
-    any_value(current_pincode_id) as current_pincode_id
-  from base
-  group by customer_id
+    cast(UniqueID as string) as customer_id,
+    SAFE.PARSE_DATE('%d-%m-%y', cast(Date_of_Birth as string)) as date_of_birth,
+    cast(branch_id as string) as branch_id,
+    Employment_Type as employment_type,
+    cast(State_ID as string) as state_id,
+    cast(Current_pincode_ID as string) as current_pincode_id,
+    'RETAIL' as customer_type,
+    row_number() over (partition by cast(UniqueID as string) order by cast(UniqueID as string)) as rn
+  from src
+  where UniqueID is not null
 )
 
-select * from dedup
-
+select
+  customer_id,
+  date_of_birth,
+  branch_id,
+  employment_type,
+  state_id,
+  current_pincode_id,
+  customer_type
+from deduped
+where rn = 1

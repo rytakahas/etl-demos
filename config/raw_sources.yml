@@ -1,0 +1,21 @@
+raw_sources:
+  - name: customers_raw
+    description: "Synthetic customer master for bank DWH demo"
+    project_id: vivid-layout-453307-p4
+    dataset_id: ryoji_raw_demos
+    table_id: customers_raw
+    csv_path: data/customers.csv
+
+  - name: loan_applications_raw
+    description: "Vehicle loan applications (Kaggle vehicle_loans_train_clean.csv)"
+    project_id: vivid-layout-453307-p4
+    dataset_id: ryoji_raw_demos
+    table_id: loan_applications_raw
+    csv_path: data/vehicle_loans_train_clean.csv
+
+  - name: payments_raw
+    description: "Synthetic payment transactions"
+    project_id: vivid-layout-453307-p4
+    dataset_id: ryoji_raw_demos
+    table_id: payments_raw
+    csv_path: data/payments.csv

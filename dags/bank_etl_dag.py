@@ -1,9 +1,11 @@
+from __future__ import annotations
+import os
+from pathlib import Path
 from datetime import datetime, timedelta
-
+import yaml
 from airflow import DAG
-from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
-
+from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from include.load_raw_to_bq import load_csv_to_bq
 
 DEFAULT_ARGS = {
@@ -11,6 +13,23 @@ DEFAULT_ARGS = {
     "retries": 1,
     "retry_delay": timedelta(minutes=5),
 }
+
+def load_raw_sources_config() -> list[dict]:
+    """
+    Read config/raw_sources.yml and return the list of raw sources.
+    """
+    airflow_home = Path(os.environ.get("AIRFLOW_HOME", "/usr/local/airflow"))
+    config_path = airflow_home / "config" / "raw_sources.yml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"raw_sources.yml not found at {config_path}")
+    with config_path.open() as f:
+        data = yaml.safe_load(f) or {}
+    raw_sources = data.get("raw_sources", [])
+    if not raw_sources:
+        raise ValueError("raw_sources.yml is empty or missing 'raw_sources' key")
+    return raw_sources
+
+RAW_SOURCES = load_raw_sources_config()
 
 with DAG(
     dag_id="bank_etl_dag",
@@ -20,61 +39,30 @@ with DAG(
     catchup=False,
     tags=["bank", "etl", "dbt"],
 ) as dag:
-
-    load_customers_raw = PythonOperator(
-        task_id="load_customers_raw",
-        python_callable=load_csv_to_bq,
-        op_kwargs={
-            "project_id": "vivid-layout-453307-p4",
-            "dataset_id": "ryoji_raw_demos",
-            "table_id": "customers_raw",
-            "csv_path": "/usr/local/airflow/data/customers.csv",
-        },
-    )
-
-  # load_loans_raw = PythonOperator(
-  #     task_id="load_loans_raw",
-  #     python_callable=load_csv_to_bq,
-  #     op_kwargs={
-  #         "project_id": "vivid-layout-453307-p4",
-  #         "dataset_id": "ryoji_raw_demos",
-  #         "table_id": "loan_applications_raw",
-  #         "csv_path": "/usr/local/airflow/data/auto_loan_default.csv",
-  #     },
-  # )
-    load_loans_raw = PythonOperator(
-        task_id="load_loans_raw",
-        python_callable=load_csv_to_bq,
-        op_kwargs={
-            "project_id": "vivid-layout-453307-p4",
-            "dataset_id": "ryoji_raw_demos",
-            "table_id": "loan_applications_raw",
-            "csv_path": "/usr/local/airflow/data/vehicle_loans_train.csv",
-            "sanitize_header": True,
-        },
-    )
-
-
-
-    load_payments_raw = PythonOperator(
-        task_id="load_payments_raw",
-        python_callable=load_csv_to_bq,
-        op_kwargs={
-            "project_id": "vivid-layout-453307-p4",
-            "dataset_id": "ryoji_raw_demos",
-            "table_id": "payments_raw",
-            "csv_path": "/usr/local/airflow/data/payments.csv",
-        },
-    )
-
+    # 1) Dynamically build one load task per raw source
+    load_tasks = []
+    for src in RAW_SOURCES:
+        task = PythonOperator(
+            task_id=f"load_{src['name']}",
+            python_callable=load_csv_to_bq,
+            op_kwargs={
+                "project_id": src["project_id"],
+                "dataset_id": src["dataset_id"],
+                "table_id": src["table_id"],
+                "csv_path": src["csv_path"],
+            },
+        )
+        load_tasks.append(task)
+    
+    # 2) dbt run + dbt test
     dbt_run = BashOperator(
         task_id="dbt_run",
         bash_command=(
             "cd /usr/local/airflow/dbt && "
-            "dbt run --profiles-dir . --project-dir ."
+            "dbt run --profiles-dir . --project-dir . --full-refresh"
         ),
     )
-
+    
     dbt_test = BashOperator(
         task_id="dbt_test",
         bash_command=(
@@ -82,6 +70,6 @@ with DAG(
             "dbt test --profiles-dir . --project-dir ."
         ),
     )
-
-    [load_customers_raw, load_loans_raw, load_payments_raw] >> dbt_run >> dbt_test
-
+    
+    # 3) Dependencies: all loads → dbt run → dbt test
+    load_tasks >> dbt_run >> dbt_test

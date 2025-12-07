@@ -63,3 +63,34 @@ The `dags/bank_etl_dag.py` DAG shows how to:
 - Run dbt tests
 
 This can run on local Airflow, Cloud Composer, or MWAA with small changes.
+
+
+## Metadata-driven ingestion & generic staging
+
+To keep this demo closer to an “enterprise-ready” setup without making it heavy, the repo uses two patterns:
+
+### 1. Metadata-driven ingestion (Airflow)
+
+Raw CSV → BigQuery ingestion is configured in a single file:
+
+- `config/raw_sources.yml`
+
+Example:
+
+```yaml
+raw_sources:
+  - name: customers_raw
+    project_id: vivid-layout-453307-p4
+    dataset_id: ryoji_raw_demos
+    table_id: customers_raw
+    csv_path: data/customers.csv
+  - name: loan_applications_raw
+    project_id: vivid-layout-453307-p4
+    dataset_id: ryoji_raw_demos
+    table_id: loan_applications_raw
+    csv_path: data/vehicle_loans_train_clean.csv
+  - name: payments_raw
+    project_id: vivid-layout-453307-p4
+    dataset_id: ryoji_raw_demos
+    table_id: payments_raw
+    csv_path: data/payments.csv
