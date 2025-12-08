@@ -1,9 +1,9 @@
-name: "bank_dwh_demo"
+name: "ryoji_wh_demos"
 version: "1.0.0"
-profile: "bank_dwh_bigquery"
+profile: "ryoji_wh_bigquery"
 
 models:
-  bank_dwh_demo:
+  ryoji_wh_demos:
     +materialized: view
     staging:
       +schema: staging

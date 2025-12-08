@@ -1,4 +1,4 @@
-bank_dwh_bigquery:
+ryoji_wh_bigquery:
   target: dev
   outputs:
     dev:
@@ -6,7 +6,7 @@ bank_dwh_bigquery:
       method: service-account
       keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
       project: able-balm-454718-n8
-      dataset: bank_dwh_demo
+      dataset: ryoji_wh_demos
       threads: 4
       location: europe-west1
 

@@ -77,3 +77,28 @@ def load_csv_to_bq(
     load_job.result()
     print(f"Loaded {csv_path} into {full_table_id}")
 
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Load a CSV into BigQuery raw dataset")
+    parser.add_argument("--project", required=True, help="GCP project id")
+    parser.add_argument("--dataset", required=True, help="BigQuery dataset id")
+    parser.add_argument("--table", required=True, help="BigQuery table id")
+    parser.add_argument("--csv", required=True, help="Path to CSV (relative to AIRFLOW_HOME or absolute)")
+    parser.add_argument(
+        "--sanitize-header",
+        action="store_true",
+        help="Replace '.' with '_' in header row before loading",
+    )
+
+    args = parser.parse_args()
+
+    load_csv_to_bq(
+        project_id=args.project,
+        dataset_id=args.dataset,
+        table_id=args.table,
+        csv_path=args.csv,
+        sanitize_header=args.sanitize_header,
+    )
+
