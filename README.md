@@ -1,6 +1,6 @@
 # Bank DWH Demo – Domain-Driven, Layered Warehouse on BigQuery
 
-This repository is a **mini Honda-style bank DWH** demo:
+This repository is a **mini style bank DWH** demo:
 
 - Domain-driven design: Customers, Products, Dealers, Loans, Payments, Defaults.
 - Layered architecture: **Bronze (raw)** → **Silver (staging)** → **Gold (marts)**.
