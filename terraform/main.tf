@@ -15,11 +15,11 @@ provider "google" {
 resource "google_bigquery_dataset" "raw" {
   dataset_id = "ryoji_raw_demos"
   project    = var.raw_project_id
-  location   = "EU"
+  location   = "europe-west1"
 }
 
 resource "google_bigquery_dataset" "wh" {
-  dataset_id = "bank_dwh_demo"
+  dataset_id = "ryoji_wh_demos"
   project    = var.wh_project_id
-  location   = "EU"
+  location   = "europ-west1"
 }
