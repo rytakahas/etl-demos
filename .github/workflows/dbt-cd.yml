@@ -3,15 +3,15 @@ name: dbt CD
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:   # allow manual run
+  workflow_dispatch:
 
 jobs:
   dbt-prod:
     runs-on: ubuntu-latest
 
     env:
-      DBT_PROFILES_DIR: ./.github/dbt_profiles
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
+      DBT_PROJECT_DIR: dbt
+      DBT_PROFILES_DIR: dbt
 
     steps:
       - name: Checkout repo
@@ -22,19 +22,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dbt
+      - name: Install dbt-bigquery
         run: |
           python -m pip install --upgrade pip
-          pip install dbt-bigquery
+          pip install "dbt-bigquery==1.10.3"
 
-      - name: Write GCP service account key
+      - name: Write GCP service account key (base64) + export env var
+        shell: bash
         run: |
-          echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > $GOOGLE_APPLICATION_CREDENTIALS
+          KEY_PATH="${GITHUB_WORKSPACE}/gcp-dbt-sa.json"
+          echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 --decode > "${KEY_PATH}"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${KEY_PATH}" >> "$GITHUB_ENV"
 
       - name: dbt deps
-        run: dbt deps
+        run: |
+          dbt deps --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}"
 
-      # In prod, run full build or a subset
       - name: dbt build (prod)
-        run: dbt build --target prod
+        run: |
+          dbt build --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}" --target prod
 
