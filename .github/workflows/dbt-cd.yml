@@ -27,20 +27,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install "dbt-bigquery==1.10.3"
 
-      - name: Write GCP service account key (base64) + export env var
+      - name: Write GCP service account key (raw JSON)
         shell: bash
         run: |
           set -euo pipefail
           KEY_PATH="${GITHUB_WORKSPACE}/gcp-dbt-sa.json"
-
-          printf '%s' "${{ secrets.GCP_SA_KEY_B64 }}" \
-            | tr -d '\n\r' \
-            | base64 --decode > "${KEY_PATH}"
-
-          test -s "${KEY_PATH}"
-          [ "$(head -c 1 "${KEY_PATH}")" = "{" ]
-
-          echo "GOOGLE_APPLICATION_CREDENTIALS=${KEY_PATH}" >> "$GITHUB_ENV"
+          printf '%s' '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > "$KEY_PATH"
+          test -s "$KEY_PATH"
+          [ "$(head -c 1 "$KEY_PATH")" = "{" ]
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$KEY_PATH" >> "$GITHUB_ENV"
 
       - name: dbt deps
         run: |
