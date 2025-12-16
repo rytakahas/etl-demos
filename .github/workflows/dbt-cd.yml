@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  dbt-prod:
+  dbt-cd:
     runs-on: ubuntu-latest
 
     env:
@@ -38,7 +38,7 @@ jobs:
         run: |
           dbt deps --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}"
 
-      - name: dbt build (prod)
+      - name: dbt build (cd)
         run: |
-          dbt build --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}" --target prod
+          dbt build --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}" --target cd
 
