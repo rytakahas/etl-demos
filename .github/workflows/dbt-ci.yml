@@ -41,15 +41,6 @@ jobs:
           # Write secret exactly as-is (must be JSON contents)
           printf '%s' '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
 
-          # Validate JSON without printing it
-          python - <<'PY'
-import json, os
-p=os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
-with open(p,"r",encoding="utf-8") as f:
-    json.load(f)
-print("Service account JSON is valid.")
-PY
-
       - name: Sanity check dbt project files
         run: |
           test -f "$DBT_PROJECT_DIR/dbt_project.yml"
