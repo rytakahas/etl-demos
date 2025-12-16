@@ -9,9 +9,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # For BigQuery example – adapt env vars to your setup
-      DBT_PROFILES_DIR: ./.github/dbt_profiles
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-key.json
+      DBT_PROJECT_DIR: ${{ github.workspace }}/dbt
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/gcp-dbt-sa.json
 
     steps:
       - name: Checkout repo
@@ -22,26 +22,33 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dbt
+      - name: Install dbt-bigquery
         run: |
           python -m pip install --upgrade pip
-          pip install dbt-bigquery
+          pip install "dbt-bigquery==1.10.3"
 
       - name: Write GCP service account key
+        shell: bash
         run: |
-          echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > $GOOGLE_APPLICATION_CREDENTIALS
+          cat > "$GOOGLE_APPLICATION_CREDENTIALS" << 'EOF'
+          ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          EOF
+          # sanity check: JSON must parse
+          python -c "import json; json.load(open('$GOOGLE_APPLICATION_CREDENTIALS')); print('SA JSON OK')"
+
+      - name: Sanity check dbt project paths
+        run: |
+          echo "DBT_PROJECT_DIR=$DBT_PROJECT_DIR"
+          echo "DBT_PROFILES_DIR=$DBT_PROFILES_DIR"
+          ls -la "$DBT_PROJECT_DIR"
+          test -f "$DBT_PROJECT_DIR/dbt_project.yml"
+          test -f "$DBT_PROFILES_DIR/profiles.yml"
 
       - name: dbt deps
-        run: dbt deps
+        run: |
+          dbt deps --project-dir "$DBT_PROJECT_DIR" --profiles-dir "$DBT_PROFILES_DIR"
 
-      - name: dbt compile
-        run: dbt compile --target ci
-
-      # Optionally only run models modified in this PR + their children
-      - name: dbt build (modified models)
-        run: dbt build --target ci --select state:modified+
-
-      # Or simply:
-      # - name: dbt build
-      #   run: dbt build --target ci
+      - name: dbt build (ci)
+        run: |
+          dbt build --project-dir "$DBT_PROJECT_DIR" --profiles-dir "$DBT_PROFILES_DIR" --target ci
 
