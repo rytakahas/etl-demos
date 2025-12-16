@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      DBT_PROJECT_DIR: dbt
-      DBT_PROFILES_DIR: dbt
+      DBT_PROJECT_DIR: ${{ github.workspace }}/dbt
+      DBT_PROFILES_DIR: ${{ github.workspace }}/dbt
 
     steps:
       - name: Checkout repo
@@ -30,8 +30,16 @@ jobs:
       - name: Write GCP service account key (base64) + export env var
         shell: bash
         run: |
+          set -euo pipefail
           KEY_PATH="${GITHUB_WORKSPACE}/gcp-dbt-sa.json"
-          echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 --decode > "${KEY_PATH}"
+
+          printf '%s' "${{ secrets.GCP_SA_KEY_B64 }}" \
+            | tr -d '\n\r' \
+            | base64 --decode > "${KEY_PATH}"
+
+          test -s "${KEY_PATH}"
+          [ "$(head -c 1 "${KEY_PATH}")" = "{" ]
+
           echo "GOOGLE_APPLICATION_CREDENTIALS=${KEY_PATH}" >> "$GITHUB_ENV"
 
       - name: dbt deps
