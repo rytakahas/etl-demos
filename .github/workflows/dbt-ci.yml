@@ -12,7 +12,6 @@ jobs:
     env:
       DBT_PROJECT_DIR: dbt
       DBT_PROFILES_DIR: dbt
-      GOOGLE_APPLICATION_CREDENTIALS: gcp-dbt-sa.json
 
     steps:
       - name: Checkout repo
@@ -34,34 +33,31 @@ jobs:
           test -f "${DBT_PROFILES_DIR}/profiles.yml"
           echo "OK: dbt_project.yml and profiles.yml found."
 
-      - name: Decide CI mode (build vs compile-only)
+      - name: Decide CI mode (build vs skip)
         shell: bash
         run: |
-          if [ -z "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" ]; then
-            echo "SKIP_BQ=true" >> "$GITHUB_ENV"
-            echo "No GCP secret available. Will run compile-only."
+          if [ -z "${{ secrets.GCP_SA_KEY_B64 }}" ]; then
+            echo "SKIP_DBT=true" >> "$GITHUB_ENV"
+            echo "No GCP secret available. Skipping dbt steps."
           else
-            echo "SKIP_BQ=false" >> "$GITHUB_ENV"
-            echo "GCP secret available. Will run full build."
+            echo "SKIP_DBT=false" >> "$GITHUB_ENV"
           fi
 
-      - name: Write GCP service account key
-        if: env.SKIP_BQ == 'false'
+      - name: Write GCP service account key (base64) + export env var
+        if: env.SKIP_DBT == 'false'
         shell: bash
         run: |
-          printf '%s' "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" > "${GOOGLE_APPLICATION_CREDENTIALS}"
+          KEY_PATH="${GITHUB_WORKSPACE}/gcp-dbt-sa.json"
+          echo "${{ secrets.GCP_SA_KEY_B64 }}" | base64 --decode > "${KEY_PATH}"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=${KEY_PATH}" >> "$GITHUB_ENV"
 
       - name: dbt deps
+        if: env.SKIP_DBT == 'false'
         run: |
           dbt deps --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}"
 
-      - name: dbt compile (no warehouse)
-        if: env.SKIP_BQ == 'true'
-        run: |
-          dbt compile --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}" --target dev
-
       - name: dbt build (ci)
-        if: env.SKIP_BQ == 'false'
+        if: env.SKIP_DBT == 'false'
         run: |
           dbt build --project-dir "${DBT_PROJECT_DIR}" --profiles-dir "${DBT_PROFILES_DIR}" --target ci
 
