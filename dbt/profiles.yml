@@ -10,3 +10,20 @@ ryoji_wh_bigquery:
       threads: 4
       location: europe-west1
 
+    ci:
+      type: bigquery
+      method: service-account
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      project: able-balm-454718-n8
+      dataset: ryoji_wh_demos_ci
+      threads: 4
+      location: europe-west1
+
+    prod:
+      type: bigquery
+      method: service-account
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      project: able-balm-454718-n8
+      dataset: ryoji_wh_demos_prod
+      location: europe-west1
+      threads: 4
