@@ -28,38 +28,48 @@ jobs:
           python -m pip install --upgrade pip
           pip install "dbt-bigquery==1.10.3"
 
-      # Write SA key only if secret is available (fork PRs won't have it)
-      - name: Write GCP service account key (if available)
-        shell: bash
-        run: |
-          if [ -z "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" ]; then
-            echo "SKIP_BQ=true" >> $GITHUB_ENV
-            echo "No GCP secret available in this run (likely fork PR). Will run compile-only."
-            exit 0
-          fi
-
-          # Write secret exactly as-is (must be JSON contents)
-          printf '%s' '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
-
       - name: Sanity check dbt project files
         run: |
           test -f "$DBT_PROJECT_DIR/dbt_project.yml"
           test -f "$DBT_PROFILES_DIR/profiles.yml"
           echo "dbt_project.yml and profiles.yml found."
 
+      # If secret missing (fork PR), compile only using dev (no SA needed)
+      - name: Decide CI mode
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" ]; then
+            echo "SKIP_BQ=true" >> $GITHUB_ENV
+            echo "No GCP secret available. Will run compile-only (dev target)."
+          else
+            echo "SKIP_BQ=false" >> $GITHUB_ENV
+            echo "GCP secret available. Will run full build (ci target)."
+          fi
+
+      - name: Write GCP service account key
+        if: env.SKIP_BQ == 'false'
+        shell: bash
+        run: |
+          printf '%s' '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
+          python - <<'PY'
+import json, os
+p=os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+with open(p,"r",encoding="utf-8") as f:
+    json.load(f)
+print("Service account JSON is valid.")
+PY
+
       - name: dbt deps
         run: |
           dbt deps --project-dir "$DBT_PROJECT_DIR" --profiles-dir "$DBT_PROFILES_DIR"
 
-      # If no secrets, compile only (still good CI signal)
       - name: dbt compile (no warehouse)
         if: env.SKIP_BQ == 'true'
         run: |
-          dbt compile --project-dir "$DBT_PROJECT_DIR" --profiles-dir "$DBT_PROFILES_DIR" --target ci
+          dbt compile --project-dir "$DBT_PROJECT_DIR" --profiles-dir "$DBT_PROFILES_DIR" --target dev
 
-      # If secrets exist, run full build + tests
       - name: dbt build (ci)
-        if: env.SKIP_BQ != 'true'
+        if: env.SKIP_BQ == 'false'
         run: |
           dbt build --project-dir "$DBT_PROJECT_DIR" --profiles-dir "$DBT_PROFILES_DIR" --target ci
 
