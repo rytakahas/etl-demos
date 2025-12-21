@@ -1,4 +1,4 @@
-# Honda Bank KG layer (drop-in for etl-demos)
+# Honda Bank KG layer
 
 This folder adds an **ontology + RDF export + triplestore loading** layer on top of your existing ETL/DWH marts.
 
