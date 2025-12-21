@@ -14,7 +14,7 @@ docker compose -f kg/neo4j/docker-compose.yml up -d
 Neo4j Browser:
 - http://127.0.0.1:7474/browser/
 - user: `neo4j`
-- password: `password123`
+- password: `xxxxxxxx`
 
 ## Export TTL data + copy ontology into import/
 
