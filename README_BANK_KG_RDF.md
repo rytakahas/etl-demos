@@ -1,6 +1,4 @@
-# Bank KG (RDF Turtle -> Neo4j n10s) Drop-in
-
-This drop-in adds an end-to-end pipeline:
+# Bank KG (RDF Turtle -> Neo4j n10s)
 
 - **dbt** builds marts
 - **Python** exports marts -> `hb_bank_data.ttl`
@@ -66,4 +64,4 @@ LIMIT 50;
 
 ## Airflow
 
-Drop `dags/bank_kg_rdf_dag.py` into Airflow and run the DAG `bank_kg_rdf_load`.
+`dags/bank_kg_rdf_dag.py` into Airflow and run the DAG `bank_kg_rdf_load`.
