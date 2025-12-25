@@ -289,16 +289,6 @@ Included "interview-ready" queries cover:
 
 ---
 
-## 10) Interview Talk Track (60 Seconds)
-
-> "I start by stating the business questions and grain.  
-> Then I design a Kimball star schema: facts are contracts/payments/balances/defaults, dims are customer/dealer/product/vehicle/date/country.  
-> I use surrogate keys, and SCD2 for customer history.  
-> Physically, I partition/sort by date for big snapshot facts and optimize joins by contract keys.  
-> Finally, I provide a query pack that answers profitability, dealer ranking, EV adoption, and risk-adjusted performance."
-
----
-
 ## References (Verbal / Interview-Friendly)
 - Kimball dimensional modeling (star schema)
 - Basel / IFRS-9 concepts (PD/LGD/EAD terminology)
