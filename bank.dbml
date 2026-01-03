@@ -1,5 +1,5 @@
 //////////////////////////////////////////////////////
-// HONDA BANK EUROPE – ANALYTIC DWH (STAR SCHEMA)
+//  BANK EUROPE – ANALYTIC DWH (STAR SCHEMA)
 //////////////////////////////////////////////////////
 
 // ============================
@@ -63,7 +63,7 @@ Table dim_vehicle {
 Table dim_product {
   product_key        int [pk, increment]
   product_code       varchar(50)        // internal product ID
-  product_name       varchar(100)       // 'Honda Credit', 'Honda Options', ...
+  product_name       varchar(100)       // ' Credit', ' Options', ...
   product_type       varchar(50)        // 'PCP', 'Loan', 'Leasing', 'Renting'
   is_pcp             boolean
   is_leasing         boolean
