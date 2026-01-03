@@ -1,0 +1,21 @@
+services:
+  neo4j:
+    image: neo4j:5
+    container_name: hb-neo4j
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/Password123!
+      - NEO4JLABS_PLUGINS=["n10s"]
+      - NEO4J_dbms_security_procedures_unrestricted=n10s.*,semantics.*
+      - NEO4J_dbms_security_procedures_allowlist=n10s.*,semantics.*
+    volumes:
+      - ../ontology:/var/lib/neo4j/import
+      - hb_neo4j_data:/data
+      - hb_neo4j_logs:/logs
+
+volumes:
+  hb_neo4j_data:
+  hb_neo4j_logs:
+

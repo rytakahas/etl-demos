@@ -1,0 +1,1076 @@
+dim_country_entity
+
+dim_customer
+
+dim_dealer
+
+dim_vehicle
+
+dim_product
+
+dim_contract_status
+
+dim_date
+
+f_contract_retail
+
+f_contract_wholesale
+
+f_payment
+
+f_balance_daily
+
+f_default_event
+
+Close with skew / scaling reminder
+
+You can literally rehearse this.
+
+1) dim_country_entity
+
+I:
+“Let’s start with your country / entity dimension. What is dim_country_entity for?”
+
+You:
+“dim_country_entity is my anchor for geography and legal entities. Honda Bank operates in multiple countries and sometimes via partner banks, so I want a single dimension that represents ‘where and under which legal entity this contract lives’.
+
+Conceptually:
+
+dim_country_entity
+------------------
+country_entity_key  (PK, surrogate)
+country_code        ('DE', 'ES', ...)
+country_name        ('Germany', 'Spain', ...)
+entity_code         (internal code for Honda Bank / partner bank)
+entity_name         ('Honda Bank GmbH', 'PartnerBank X', ...)
+region              ('EU', 'US', 'APAC', ...)
+
+
+country_entity_key is the PK (surrogate key).
+
+Facts and some other dims carry this as FK.
+
+Why?
+
+It lets me:
+
+Distinguish legal entities (Honda Bank vs partner bank) even inside the same country.
+
+Support multi-country and global scaling from day one.
+
+This dimension is reused by:
+
+dim_customer, dim_dealer (where the entity is based),
+
+All facts (f_contract_retail, f_payment, etc.) to tag which book the exposure belongs to.
+
+Cardinality:
+
+1 row per country+entity combination.
+
+One country_entity_key → many customers, dealers, contracts, payments (1:N).”
+
+2) dim_customer
+
+I:
+“Now dim_customer. You already mentioned it a bit, but walk me through it fully.”
+
+You:
+“dim_customer represents people or companies that take finance from Honda Bank.
+
+dim_customer
+------------
+customer_key         (PK, surrogate, INT)
+natural_customer_id  (source ID from core banking / partner)
+country_entity_key   (FK → dim_country_entity)
+customer_type        ('RETAIL', 'DEALER', 'FLEET', ...)
+segment              ('Mass', 'Affluent', 'SME', ...)
+risk_segment         ('Low', 'Medium', 'High')
+city
+postal_code
+birth_year           (if allowed / GDPR-compliant)
+
+valid_from           (SCD2 start date)
+valid_to             (SCD2 end date)
+is_current           (flag)
+
+
+PK & SK:
+
+customer_key = surrogate primary key.
+
+natural_customer_id = business ID from source, not used as FK in facts.
+
+Why surrogate key?
+
+Multiple source systems (DE, ES, partner banks) with different formats or collisions.
+
+We want Slowly Changing Dimensions Type 2:
+
+If risk_segment or segment changes, we insert a new row with a new customer_key and valid_from/valid_to.
+
+Facts (f_contract_retail, f_payment, f_default_event) join to customer_key, so we keep historical correctness.
+
+Cardinality:
+
+One dim_customer row (per version) → many contracts and payments.
+
+So: dim_customer (1) —< f_contract_retail / f_payment / f_default_event (N).”
+
+3) dim_dealer
+
+I:
+“How about dim_dealer? Does it contain customer IDs, vehicle IDs, etc.?”
+
+You:
+“No, dealers are a separate business entity: the retailers and partners selling Honda vehicles, not customers themselves.
+
+dim_dealer
+----------
+dealer_key          (PK, surrogate)
+dealer_id           (natural ID from dealer system)
+country_entity_key  (FK → dim_country_entity)
+dealer_name
+dealer_type         ('Dealer', 'Online', 'Partner')
+region              (sales region within country)
+city
+is_active
+
+
+dealer_key is PK.
+
+country_entity_key links dealer to the country/entity they belong to.
+
+I do not put customer_id, vehicle_id, etc. inside this dimension.
+Relationships are expressed via facts:
+
+A row in f_contract_retail has both customer_key and dealer_key, showing that a particular customer has a contract with a particular dealer.
+
+Vehicle and product are similarly linked via FKs in facts.
+
+Cardinality:
+
+One dealer → many contracts, payments, default events (1:N).
+
+This keeps dim_dealer clean and focused.”
+
+4) dim_vehicle
+
+I:
+“What does dim_vehicle look like?”
+
+You:
+“dim_vehicle captures the vehicle model characteristics; not every individual VIN, but the model/config level used for analytics.
+
+dim_vehicle
+-----------
+vehicle_key    (PK, surrogate)
+model_code     (internal model code)
+model_name     ('Civic', 'CR-V', 'PCX', ...)
+body_type      ('SUV', 'Sedan', 'Bike', ...)
+fuel_type      ('ICE', 'Hybrid', 'EV')
+segment        ('A/B/C/D', 'Scooter', 'Touring', ...)
+msrp           (numeric)  // Manufacturer Suggested Retail Price
+
+
+vehicle_key is PK.
+
+fuel_type is key for EV vs ICE analytics.
+
+Facts (f_contract_retail, f_contract_wholesale) reference vehicle_key to answer:
+
+“What’s the EV penetration?”
+
+“Do EV contracts have different PD / LGD than ICE?”
+
+Cardinality:
+
+One vehicle model → many retail contracts and wholesale lines (1:N).”
+
+5) dim_product
+
+I:
+“How do you handle different finance products?”
+
+You:
+“With a dim_product that describes what kind of finance the contract is.
+
+dim_product
+-----------
+product_key    (PK, surrogate)
+product_code   (internal ID)
+product_name   ('Honda Credit', 'Honda Options', ...)
+product_type   ('PCP', 'Loan', 'Leasing', 'Renting')
+is_pcp         (boolean)
+is_leasing     (boolean)
+is_renting     (boolean)
+is_insurance   (boolean)  // payment protection / insurance, etc.
+currency       ('EUR', 'GBP', ...)
+
+
+PCP = Personal Contract Purchase, a balloon / GFV-style contract.
+
+Other types: classic loan, leasing, renting, insurance add-ons.
+
+Facts link here via product_key to support:
+
+Product mix analysis (PCP vs Loan vs Leasing).
+
+Risk and profitability by product type.
+
+Cardinality:
+
+One product → many contracts (1:N).”
+
+6) dim_contract_status
+
+I:
+“What about contract statuses? Where do you store active / closed / defaulted?”
+
+You:
+“I keep them in dim_contract_status:
+
+dim_contract_status
+-------------------
+contract_status_key  (PK, surrogate)
+status_code          ('ACTIVE', 'CLOSED', 'IN_ARREARS', 'DEFAULTED', ...)
+status_description
+is_default_status    (boolean) // true if counted as default in NPL/LGD
+
+
+Facts like f_contract_retail and f_balance_daily reference this via contract_status_key.
+
+This lets us:
+
+Standardize status logic across countries.
+
+Control which statuses count as default for NPL (Non-Performing Loans) and LGD metrics.”
+
+7) dim_date
+
+I:
+“And your dim_date?”
+
+You:
+“dim_date is a central calendar dimension:
+
+dim_date
+--------
+date_key       (PK, int, e.g. 20251231)
+full_date      (DATE)
+day
+month
+year
+quarter
+week_of_year
+day_of_week    (1=Mon..7=Sun)
+is_weekend
+is_month_end
+
+
+One shared table that all facts join to.
+
+Provides consistent calendar logic:
+
+Monthly, quarterly reports,
+
+Fiscal calendar if needed,
+
+Weekend / holiday logic.
+
+Cardinality:
+
+1 row per calendar date for many years; ~20k rows.
+
+Very small, easy to join.”
+
+8) f_contract_retail
+
+I:
+“Let’s move to facts. Start with f_contract_retail.”
+
+You:
+“f_contract_retail models loan origination for retail customers.
+
+f_contract_retail
+-----------------
+contract_key        (PK, surrogate)
+natural_contract_id (source ID)
+
+customer_key        (FK → dim_customer)
+dealer_key          (FK → dim_dealer)
+vehicle_key         (FK → dim_vehicle)
+product_key         (FK → dim_product)
+country_entity_key  (FK → dim_country_entity)
+orig_date_key       (FK → dim_date)
+maturity_date_key   (FK → dim_date)
+contract_status_key (FK → dim_contract_status)
+
+approved_amount     (numeric)
+interest_rate       (numeric)
+term_months         (int)
+ltv_pct             (numeric)   // Loan-to-Value
+balloon_amount      (numeric)   // PCP
+is_secured          (boolean)
+
+// GRAIN: one row per retail finance contract.
+
+
+One row = one contract.
+
+It connects all major dimensions:
+
+Who (customer), where (country/entity), through whom (dealer), what product, what vehicle, when (orig date), and status.
+
+Measures support:
+
+New business volume,
+
+LTV distributions,
+
+EV vs ICE financing.
+
+Cardinality:
+
+Each contract has exactly one row, but will be referenced by many rows in other facts (payments, balances).”
+
+9) f_contract_wholesale
+
+I:
+“And wholesale / dealer financing?”
+
+You:
+“That’s f_contract_wholesale – the floorplan / credit line given to dealers.
+
+f_contract_wholesale
+--------------------
+wholesale_contract_key  (PK, surrogate)
+dealer_key              (FK → dim_dealer)
+vehicle_key             (FK → dim_vehicle, optional)
+product_key             (FK → dim_product)
+country_entity_key      (FK → dim_country_entity)
+start_date_key          (FK → dim_date)
+end_date_key            (FK → dim_date)
+
+credit_limit_amount     (numeric)
+utilized_amount         (numeric)
+margin_bps              (int)  // margin in basis points
+
+// GRAIN: one row per dealer wholesale credit line / floorplan agreement.
+
+
+Some wholesale lines may be per model; others just per dealer.
+
+Used for:
+
+Dealer risk and exposure,
+
+Utilization of lines,
+
+Profitability at dealer / entity level.”
+
+10) f_payment
+
+I:
+“What about payments? How do you design f_payment?”
+
+You:
+“f_payment captures instalments and payments.
+
+f_payment
+---------
+payment_key        (PK, surrogate)
+contract_key       (FK → f_contract_retail)
+customer_key       (FK → dim_customer)
+dealer_key         (FK → dim_dealer)
+payment_date_key   (FK → dim_date)
+country_entity_key (FK → dim_country_entity)
+
+scheduled_amount   (numeric)
+paid_amount        (numeric)
+principal_component (numeric)
+interest_component  (numeric)
+fee_component       (numeric)
+dpd_at_payment      (int)      // Days Past Due
+
+// GRAIN: one row per scheduled or actual payment.
+
+
+One contract → many rows in f_payment (1:N).
+
+We can analyze:
+
+Payment behaviour,
+
+Partial payments, late payments,
+
+Evolution of DPD.
+
+This fact is key for behaviour-based PD models and collections strategies.”
+
+11) f_balance_daily
+
+I:
+“Tell me how you track daily exposures.”
+
+You:
+“f_balance_daily is the snapshot fact for balances.
+
+f_balance_daily
+---------------
+balance_key        (PK, surrogate)
+contract_key       (FK → f_contract_retail)
+date_key           (FK → dim_date)
+country_entity_key (FK → dim_country_entity)
+contract_status_key (FK → dim_contract_status)
+
+outstanding_principal (numeric)
+accrued_interest      (numeric)
+dpd                   (int)
+ead_proxy             (numeric)  // Exposure at Default proxy
+
+// GRAIN: one row per contract per date (daily or month-end).
+
+
+Very large table: contracts × dates.
+
+Used for:
+
+NPL ratio,
+
+Exposure profiles,
+
+Vintage curves,
+
+PD/LGD/EAD modelling.
+
+Because it’s huge, we care a lot about partitioning/sorting by date and using a good distribution key.”
+
+12) f_default_event
+
+I:
+“Finally, how do you model defaults and recoveries?”
+
+You:
+“With f_default_event:
+
+f_default_event
+---------------
+default_event_key  (PK, surrogate)
+contract_key       (FK → f_contract_retail)
+customer_key       (FK → dim_customer)
+dealer_key         (FK → dim_dealer)
+default_date_key   (FK → dim_date)
+country_entity_key (FK → dim_country_entity)
+
+default_amount     (numeric)
+recovery_amount    (numeric)
+lgd_pct            (numeric)  // Loss Given Default %
+
+ // GRAIN: one row per default event per contract.
+
+
+It’s the base for LGD and recovery analysis:
+
+LGD = (default_amount – recovery_amount) / exposure.
+
+Tied to contract, customer, dealer, country, date.
+
+Joined with balances and payments, it supports full risk analytics.”
+
+13) Quick scaling & skew story
+
+I:
+“How do you ensure this design scales and avoids skew?”
+
+You:
+“Logically, the star schema is fact-centric and stable even as we add countries or years:
+
+We just add more rows to f_payment, f_balance_daily, etc., and new rows to dim_country_entity.
+
+No fundamental redesign needed.
+
+Physically:
+
+On Redshift:
+
+Use date_key as SORT KEY on big facts like f_payment and f_balance_daily so queries can prune by time.
+
+Use a high-cardinality distribution key like contract_key to spread data evenly and avoid dist key skew.
+
+Avoid country_entity_key as a dist key (few values → skew).
+
+On BigQuery (if we were there):
+
+PARTITION BY full_date/date_key, CLUSTER BY (country_entity_key, dealer_key, contract_key) for large facts.
+
+That prunes by time and localizes queries by country/dealer.
+
+For global scale:
+
+Same schema can be deployed in regional clusters (EU, US, APAC) with the same dbt models, just different profiles.
+
+The logical ERD stays the same; only the physical layout (partitions, clusters, sort/dist keys) changes.”
+
+---
+
+I’ll assume this definition of profit (you can say it out loud in the interview):
+
+Gross income ≈ sum of interest_component + fee_component from f_payment
+
+Credit loss ≈ sum of (default_amount - recovery_amount) from f_default_event
+
+Net profit = gross income − credit loss
+
+Period: 2025-01-01 → 2025-05-31
+Grain: per dealer (with number of distinct customers).
+
+SQL with CTEs (dealer → customers & profit Jan–May 2025)
+-- 1) Aggregate payments (income) per dealer in Jan–May 2025
+WITH payments_agg AS (
+    SELECT
+        p.dealer_key,
+        p.country_entity_key,
+        COUNT(DISTINCT p.customer_key) AS num_customers,
+        SUM(p.interest_component + p.fee_component) AS gross_income
+    FROM f_payment p
+    JOIN dim_date d
+        ON d.date_key = p.payment_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        p.dealer_key,
+        p.country_entity_key
+),
+
+-- 2) Aggregate credit losses (defaults - recoveries) per dealer in same period
+defaults_agg AS (
+    SELECT
+        de.dealer_key,
+        de.country_entity_key,
+        SUM(de.default_amount - de.recovery_amount) AS credit_loss
+    FROM f_default_event de
+    JOIN dim_date d
+        ON d.date_key = de.default_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        de.dealer_key,
+        de.country_entity_key
+),
+
+-- 3) Combine income and losses to compute net profit per dealer
+profit_by_dealer AS (
+    SELECT
+        p.dealer_key,
+        p.country_entity_key,
+        p.num_customers,
+        p.gross_income,
+        COALESCE(d.credit_loss, 0) AS credit_loss,
+        p.gross_income - COALESCE(d.credit_loss, 0) AS net_profit
+    FROM payments_agg p
+    LEFT JOIN defaults_agg d
+        ON p.dealer_key = d.dealer_key
+       AND p.country_entity_key = d.country_entity_key
+)
+
+-- 4) Final output: dealer name, location, country, ordered by profit desc
+SELECT
+    dd.dealer_name,
+    dd.city,
+    ce.country_code,
+    ce.country_name,
+    profit.num_customers,
+    profit.gross_income,
+    profit.credit_loss,
+    profit.net_profit
+FROM profit_by_dealer profit
+JOIN dim_dealer dd
+    ON profit.dealer_key = dd.dealer_key
+JOIN dim_country_entity ce
+    ON profit.country_entity_key = ce.country_entity_key
+ORDER BY
+    profit.net_profit DESC;
+
+How you can explain this in the interview
+
+You (summarizing):
+
+“I’d define a CTE payments_agg that aggregates all payments between January and May 2025, counting distinct customers and summing interest and fees as gross income per dealer and country/entity.
+
+Then a second CTE defaults_agg aggregates credit losses in the same period as default_amount − recovery_amount per dealer.
+
+In profit_by_dealer I join the two, compute net_profit = gross_income − credit_loss, and finally join to dim_dealer and dim_country_entity to show dealer name, location, country and order by net_profit DESC.
+
+This tells us which dealers generated the highest profit and how many unique customers they served in that period.”
+
+---
+
+f_contract_retail:
+
+“To work with margin at contract level, I’d extend f_contract_retail with a few finance fields, for example:”
+
+f_contract_retail (extra columns)
+---------------------------------
+interest_rate         -- annual customer rate, %
+funding_rate          -- annual bank cost of funds, %
+margin_bps            -- (interest_rate - funding_rate) * 10,000
+est_lifetime_margin_eur  -- precomputed estimate of total margin over contract life
+
+
+interest_rate: what the customer pays.
+
+funding_rate: bank’s cost of funds.
+
+margin_bps: spread in basis points.
+
+est_lifetime_margin_eur: (optional but very convenient) – precomputed lifetime margin, coming from finance/P&L team.
+
+Then you can show two query styles:
+
+1. Version A – Use margin from f_contract_retail (no defaults yet)
+
+Here we treat profit ≈ margin from contracts originated in Jan–May 2025.
+
+If you have est_lifetime_margin_eur already computed in f_contract_retail (best case):
+
+WITH contract_margin AS (
+    SELECT
+        c.dealer_key,
+        c.country_entity_key,
+        COUNT(DISTINCT c.customer_key) AS num_customers,
+        SUM(c.approved_amount) AS total_volume,
+        SUM(c.est_lifetime_margin_eur) AS total_margin_eur
+    FROM f_contract_retail c
+    JOIN dim_date d
+        ON d.date_key = c.orig_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        c.dealer_key,
+        c.country_entity_key
+)
+
+SELECT
+    dd.dealer_name,
+    dd.city,
+    ce.country_code,
+    ce.country_name,
+    cm.num_customers,
+    cm.total_volume,
+    cm.total_margin_eur AS net_profit_estimate
+FROM contract_margin cm
+JOIN dim_dealer dd
+    ON cm.dealer_key = dd.dealer_key
+JOIN dim_country_entity ce
+    ON cm.country_entity_key = ce.country_entity_key
+ORDER BY
+    cm.total_margin_eur DESC;
+
+How to explain this
+
+“Instead of summing interest and fees from payments, here I assume we have an estimated lifetime margin per contract in f_contract_retail (interest spread minus funding cost, amortized by the finance team).
+
+In the CTE contract_margin I:
+
+Filter contracts originated between January and May 2025.
+
+Group by dealer_key, country_entity_key.
+
+Count distinct customers, sum financed volume and sum est_lifetime_margin_eur.
+
+Then I join to dim_dealer and dim_country_entity and order dealers by total expected margin in that period.”
+
+2. Version A’ – If you don’t have est_lifetime_margin_eur
+
+You can show a simple approximation using approved_amount, interest_rate, and funding_rate.
+
+Example: approximate lifetime margin as:
+
+est_margin
+=
+approved_amount
+×
+(
+interest_rate
+−
+funding_rate
+)
+/
+100
+×
+(
+term_months
+/
+12
+)
+est_margin=approved_amount×(interest_rate−funding_rate)/100×(term_months/12)
+
+It’s not exact amortization, but good enough to show the idea in interview:
+
+WITH contract_margin AS (
+    SELECT
+        c.dealer_key,
+        c.country_entity_key,
+        COUNT(DISTINCT c.customer_key) AS num_customers,
+        SUM(c.approved_amount) AS total_volume,
+        SUM(
+            c.approved_amount
+            * (c.interest_rate - c.funding_rate) / 100.0
+            * (c.term_months / 12.0)
+        ) AS est_lifetime_margin_eur
+    FROM f_contract_retail c
+    JOIN dim_date d
+        ON d.date_key = c.orig_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        c.dealer_key,
+        c.country_entity_key
+)
+
+SELECT
+    dd.dealer_name,
+    dd.city,
+    ce.country_code,
+    ce.country_name,
+    cm.num_customers,
+    cm.total_volume,
+    cm.est_lifetime_margin_eur AS net_profit_estimate
+FROM contract_margin cm
+JOIN dim_dealer dd
+    ON cm.dealer_key = dd.dealer_key
+JOIN dim_country_entity ce
+    ON cm.country_entity_key = ce.country_entity_key
+ORDER BY
+    cm.est_lifetime_margin_eur DESC;
+
+
+You’d explicitly say:
+
+“This is a rough proxy; in real life I’d either:
+
+Use a margin field precomputed by Finance, or
+
+Use an amortization model at cash-flow level.”
+
+3. Version B – Margin minus credit losses (include defaults)
+
+Now we combine contract margin with credit loss from f_default_event, similar structure to the first answer but using contract margin:
+
+-- 1) Margin from contracts originated in Jan–May 2025
+WITH contract_margin AS (
+    SELECT
+        c.dealer_key,
+        c.country_entity_key,
+        COUNT(DISTINCT c.customer_key) AS num_customers,
+        SUM(c.approved_amount) AS total_volume,
+        SUM(
+            c.approved_amount
+            * (c.interest_rate - c.funding_rate) / 100.0
+            * (c.term_months / 12.0)
+        ) AS est_lifetime_margin_eur
+    FROM f_contract_retail c
+    JOIN dim_date d
+        ON d.date_key = c.orig_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        c.dealer_key,
+        c.country_entity_key
+),
+
+-- 2) Credit losses recorded in the same period
+defaults_agg AS (
+    SELECT
+        de.dealer_key,
+        de.country_entity_key,
+        SUM(de.default_amount - de.recovery_amount) AS credit_loss_eur
+    FROM f_default_event de
+    JOIN dim_date d
+        ON d.date_key = de.default_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        de.dealer_key,
+        de.country_entity_key
+),
+
+-- 3) Merge and compute net profit
+profit_by_dealer AS (
+    SELECT
+        m.dealer_key,
+        m.country_entity_key,
+        m.num_customers,
+        m.total_volume,
+        m.est_lifetime_margin_eur AS gross_margin_eur,
+        COALESCE(d.credit_loss_eur, 0) AS credit_loss_eur,
+        m.est_lifetime_margin_eur - COALESCE(d.credit_loss_eur, 0) AS net_profit_eur
+    FROM contract_margin m
+    LEFT JOIN defaults_agg d
+        ON m.dealer_key = d.dealer_key
+       AND m.country_entity_key = d.country_entity_key
+)
+
+SELECT
+    dd.dealer_name,
+    dd.city,
+    ce.country_code,
+    ce.country_name,
+    p.num_customers,
+    p.total_volume,
+    p.gross_margin_eur,
+    p.credit_loss_eur,
+    p.net_profit_eur
+FROM profit_by_dealer p
+JOIN dim_dealer dd
+    ON p.dealer_key = dd.dealer_key
+JOIN dim_country_entity ce
+    ON p.country_entity_key = ce.country_entity_key
+ORDER BY
+    p.net_profit_eur DESC;
+
+How to explain this version
+
+You:
+
+“Here I split the logic into CTEs:
+
+contract_margin: for contracts originated in Jan–May 2025, I approximate lifetime margin as approved_amount * (interest_rate − funding_rate) * (term_months / 12). I group by dealer & country, counting distinct customers and summing financed volume and margin.
+
+defaults_agg: I aggregate credit losses in the same period from f_default_event as default_amount − recovery_amount per dealer and country.
+
+profit_by_dealer: I left join the two and compute **net_profit = est_lifetime_margin_eur − credit_loss_eur`.
+
+Finally, I join to dim_dealer and dim_country_entity to retrieve dealer name, city, and country, and order by net_profit_eur DESC to see which dealers contributed the most net profit in that period.
+
+In production, I’d align the exact margin and funding-cost logic with the Finance team, but structurally this CTE pattern is how I’d query the star schema.”
+
+---
+
+Dealer-level ranking per country & fuel_type (EV / Hybrid / ICE) with window functions
+
+Monthly EV vs ICE vs Hybrid trend per country using window functions
+
+You can pick one or both in the interview depending on what they ask.
+
+1) Dealer ranking per country & fuel type (EV / Hybrid / ICE)
+
+Assumptions (same as before):
+
+f_contract_retail has: approved_amount, interest_rate, funding_rate, term_months, dealer_key, country_entity_key, customer_key, vehicle_key, orig_date_key
+
+f_default_event has default + recovery per contract
+
+dim_vehicle has fuel_type = 'EV' | 'Hybrid' | 'ICE'
+
+Window functions: RANK() and SUM() OVER (...)
+
+We rank within each (country, fuel_type):
+
+-- 1) Margin from contracts (by dealer, country, fuel_type) in Jan–May 2025
+WITH contract_margin AS (
+    SELECT
+        c.dealer_key,
+        c.country_entity_key,
+        v.fuel_type,
+        COUNT(DISTINCT c.customer_key) AS num_customers,
+        SUM(c.approved_amount) AS total_volume,
+        SUM(
+            c.approved_amount
+            * (c.interest_rate - c.funding_rate) / 100.0
+            * (c.term_months / 12.0)
+        ) AS est_lifetime_margin_eur
+    FROM f_contract_retail c
+    JOIN dim_date d
+        ON d.date_key = c.orig_date_key
+    JOIN dim_vehicle v
+        ON v.vehicle_key = c.vehicle_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        c.dealer_key,
+        c.country_entity_key,
+        v.fuel_type
+),
+
+-- 2) Credit losses per dealer/country/fuel_type in same period
+defaults_agg AS (
+    SELECT
+        de.dealer_key,
+        c.country_entity_key,
+        v.fuel_type,
+        SUM(de.default_amount - de.recovery_amount) AS credit_loss_eur
+    FROM f_default_event de
+    JOIN f_contract_retail c
+        ON c.contract_key = de.contract_key
+    JOIN dim_vehicle v
+        ON v.vehicle_key = c.vehicle_key
+    JOIN dim_date d
+        ON d.date_key = de.default_date_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        de.dealer_key,
+        c.country_entity_key,
+        v.fuel_type
+),
+
+-- 3) Merge margin & loss -> net profit per dealer / country / fuel_type
+profit_by_dealer AS (
+    SELECT
+        m.dealer_key,
+        m.country_entity_key,
+        m.fuel_type,
+        m.num_customers,
+        m.total_volume,
+        m.est_lifetime_margin_eur AS gross_margin_eur,
+        COALESCE(d.credit_loss_eur, 0) AS credit_loss_eur,
+        m.est_lifetime_margin_eur - COALESCE(d.credit_loss_eur, 0) AS net_profit_eur
+    FROM contract_margin m
+    LEFT JOIN defaults_agg d
+        ON m.dealer_key = d.dealer_key
+       AND m.country_entity_key = d.country_entity_key
+       AND m.fuel_type = d.fuel_type
+),
+
+-- 4) Add dealer & country info + window functions
+ranked AS (
+    SELECT
+        ce.country_code,
+        ce.country_name,
+        p.fuel_type,
+        dd.dealer_name,
+        dd.city,
+        p.num_customers,
+        p.total_volume,
+        p.gross_margin_eur,
+        p.credit_loss_eur,
+        p.net_profit_eur,
+
+        -- Rank dealers inside each (country, fuel_type) by net profit
+        RANK() OVER (
+            PARTITION BY ce.country_code, p.fuel_type
+            ORDER BY p.net_profit_eur DESC
+        ) AS rank_in_country_fuel,
+
+        -- Share of total net profit for that (country, fuel_type) segment
+        p.net_profit_eur
+        / NULLIF(
+            SUM(p.net_profit_eur) OVER (
+                PARTITION BY ce.country_code, p.fuel_type
+            ),
+            0
+        ) AS profit_share_in_segment
+    FROM profit_by_dealer p
+    JOIN dim_dealer dd
+        ON p.dealer_key = dd.dealer_key
+    JOIN dim_country_entity ce
+        ON p.country_entity_key = ce.country_entity_key
+)
+
+SELECT
+    country_code,
+    country_name,
+    fuel_type,
+    dealer_name,
+    city,
+    num_customers,
+    total_volume,
+    net_profit_eur,
+    rank_in_country_fuel,
+    profit_share_in_segment
+FROM ranked
+WHERE fuel_type IN ('EV', 'ICE', 'Hybrid')  -- optional filter
+ORDER BY
+    country_code,
+    fuel_type,
+    rank_in_country_fuel;
+
+How to explain the window functions
+
+You:
+
+“In the final CTE ranked I use two window functions:
+
+RANK() OVER (PARTITION BY country_code, fuel_type ORDER BY net_profit_eur DESC)
+→ gives each dealer a rank inside that country and fuel type (e.g. top 3 EV dealers in Germany).
+
+SUM(net_profit_eur) OVER (PARTITION BY country_code, fuel_type)
+→ gives total net profit for that segment; then I divide each dealer’s profit by that total to get profit_share_in_segment.
+
+This way I can compare, per country, which dealers are strongest for EV, Hybrid, or ICE — both in absolute profit and as a share of that segment.”
+
+2) Monthly EV vs ICE vs Hybrid trend using window functions
+
+Now you want to see trends over time (Jan–May 2025) for EV / Hybrid / ICE per country.
+
+We can measure:
+
+Monthly volume (approved_amount) per (country, month, fuel_type)
+
+EV / Hybrid / ICE share inside each (country, month)
+
+Window function gives us the denominator (total volume in that country-month).
+
+-- 1) Monthly contract volume per country & fuel_type
+WITH contracts_month AS (
+    SELECT
+        ce.country_code,
+        v.fuel_type,
+        DATE_TRUNC('month', d.full_date) AS month_start,
+        SUM(c.approved_amount) AS total_volume_eur
+    FROM f_contract_retail c
+    JOIN dim_date d
+        ON d.date_key = c.orig_date_key
+    JOIN dim_country_entity ce
+        ON ce.country_entity_key = c.country_entity_key
+    JOIN dim_vehicle v
+        ON v.vehicle_key = c.vehicle_key
+    WHERE d.full_date BETWEEN DATE '2025-01-01' AND DATE '2025-05-31'
+    GROUP BY
+        ce.country_code,
+        v.fuel_type,
+        DATE_TRUNC('month', d.full_date)
+),
+
+-- 2) Compute EV/ICE/Hybrid share within each country+month
+with_share AS (
+    SELECT
+        country_code,
+        fuel_type,
+        month_start,
+        total_volume_eur,
+
+        -- Window: total volume that month in that country (all fuel types)
+        total_volume_eur
+        / NULLIF(
+            SUM(total_volume_eur) OVER (
+                PARTITION BY country_code, month_start
+            ),
+            0
+        ) AS volume_share_in_month
+    FROM contracts_month
+)
+
+SELECT
+    country_code,
+    month_start,
+    fuel_type,
+    total_volume_eur,
+    volume_share_in_month
+FROM with_share
+WHERE fuel_type IN ('EV', 'Hybrid', 'ICE')  -- optional
+ORDER BY
+    country_code,
+    month_start,
+    fuel_type;
+
+How to explain this one
+
+You:
+
+“Here I’m not ranking dealers but looking at trends by fuel type.
+
+In contracts_month I aggregate approved_amount per (country, month, fuel_type) for Jan–May 2025.
+
+In with_share I use a window function:
+SUM(total_volume_eur) OVER (PARTITION BY country_code, month_start)
+to get the total financed volume in that country and month across all fuel types.
+
+Then I divide each fuel_type volume by that total to get volume_share_in_month.
+
+This shows, for each country and month, how much of the financed volume is EV, Hybrid, or ICE. You can plot volume_share_in_month over time to see if EV share is increasing and ICE shrinking.”
+

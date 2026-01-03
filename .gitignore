@@ -20,6 +20,9 @@ include/gcp-dbt-sa.json
 logs/
 airflow_logs/
 
+# data
+data/*.csv
+
 # dbt artifacts
 dbt/target/
 dbt/logs/

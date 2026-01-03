@@ -23,10 +23,10 @@
 4. **Trigger the DAG** in Airflow UI
 
 That's it! The script automatically:
-- ✅ Detects column mappings
-- ✅ Generates staging SQL models
-- ✅ Updates `raw_sources.yml`
-- ✅ Updates dbt `sources.yml`
+- Detects column mappings
+- Generates staging SQL models
+- Updates `raw_sources.yml`
+- Updates dbt `sources.yml`
 
 ---
 
