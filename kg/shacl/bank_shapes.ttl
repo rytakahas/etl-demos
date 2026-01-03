@@ -1,0 +1,37 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix hb: <https://example.org/honda-bank/kg#> .
+
+# Minimal constraints (extend as needed)
+hb:ContractShape a sh:NodeShape ;
+  sh:targetClass hb:Contract ;
+  sh:property [
+    sh:path hb:hasCustomer ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path hb:hasDealer ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path hb:approvedAmount ;
+    sh:datatype xsd:decimal ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path hb:termMonths ;
+    sh:datatype xsd:integer ;
+    sh:minCount 1 ;
+  ] .
+
+hb:DefaultEventShape a sh:NodeShape ;
+  sh:targetClass hb:DefaultEvent ;
+  sh:property [
+    sh:path hb:forContract ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path hb:eventDate ;
+    sh:datatype xsd:date ;
+    sh:minCount 1 ;
+  ] .

@@ -1,0 +1,245 @@
+//////////////////////////////////////////////////////
+// HONDA BANK EUROPE – ANALYTIC DWH (STAR SCHEMA)
+//////////////////////////////////////////////////////
+
+// ============================
+// DIMENSIONS
+// ============================
+
+Table dim_country_entity {
+  country_entity_key int [pk, increment] // Surrogate PK
+  country_code       varchar(2)          // e.g. 'DE', 'ES'
+  country_name       varchar(100)
+  entity_code        varchar(20)         // internal bank / partner code
+  entity_name        varchar(100)
+  region             varchar(20)         // e.g. 'EU', 'US', 'APAC'
+
+  // NOTE: used to distinguish different legal entities / partner banks
+  // and to support multi-country scaling from day one.
+}
+
+Table dim_customer {
+  customer_key       int [pk, increment] // Surrogate PK (SCD2)
+  natural_customer_id varchar(50)        // Source system ID
+  country_entity_key int                // FK -> dim_country_entity
+  customer_type      varchar(20)        // 'RETAIL', 'DEALER', 'FLEET', ...
+  segment            varchar(50)        // e.g. 'Mass', 'Affluent', 'SME'
+  risk_segment       varchar(50)        // e.g. 'Low', 'Medium', 'High'
+  city               varchar(100)
+  postal_code        varchar(20)
+  birth_year         int                // optional, for risk models
+
+  valid_from         date               // SCD2 start date
+  valid_to           date               // SCD2 end date (9999-12-31 for current)
+  is_current         boolean
+
+  // NOTE: Surrogate key enables:
+  // - Multiple source systems (DE, ES, partner banks)
+  // - SCD2 history (separate rows per version of customer attributes)
+}
+
+Table dim_dealer {
+  dealer_key         int [pk, increment]
+  dealer_id          varchar(50)        // Natural ID from dealer system
+  country_entity_key int                // FK -> dim_country_entity
+  dealer_name        varchar(150)
+  dealer_type        varchar(50)        // 'Dealer', 'Online', 'Partner'
+  region             varchar(100)       // sales region
+  city               varchar(100)
+
+  is_active          boolean
+}
+
+Table dim_vehicle {
+  vehicle_key        int [pk, increment]
+  model_code         varchar(50)        // internal model code
+  model_name         varchar(100)       // 'Civic', 'CR-V', etc.
+  body_type          varchar(50)        // 'SUV', 'Sedan', 'Bike', ...
+  fuel_type          varchar(20)        // 'ICE', 'Hybrid', 'EV'
+  segment            varchar(50)        // 'A/B/C/D', 'Scooter', 'Touring', ...
+  msrp               numeric(12,2)      // Manufacturer Suggested Retail Price
+}
+
+Table dim_product {
+  product_key        int [pk, increment]
+  product_code       varchar(50)        // internal product ID
+  product_name       varchar(100)       // 'Honda Credit', 'Honda Options', ...
+  product_type       varchar(50)        // 'PCP', 'Loan', 'Leasing', 'Renting'
+  is_pcp             boolean
+  is_leasing         boolean
+  is_renting         boolean
+  is_insurance       boolean           // payment protection / insurance, etc.
+  currency           varchar(3)        // 'EUR', 'GBP', ...
+}
+
+Table dim_contract_status {
+  contract_status_key int [pk, increment]
+  status_code         varchar(20)       // 'ACTIVE', 'CLOSED', 'IN_ARREARS', 'DEFAULTED'
+  status_description  varchar(200)
+  is_default_status   boolean           // true if considered default for NPL/LGD
+}
+
+Table dim_date {
+  date_key           int [pk]           // YYYYMMDD
+  full_date          date
+  day                int
+  month              int
+  year               int
+  quarter            int
+  week_of_year       int
+  day_of_week        int                // 1=Mon,..7=Sun
+  is_weekend         boolean
+  is_month_end       boolean
+
+  // NOTE: single shared calendar dimension.
+  // All facts join here => consistent time reporting.
+}
+
+
+// ============================
+// FACTS
+// ============================
+
+Table f_contract_retail {
+  contract_key       int [pk, increment] // Surrogate PK for fact
+  natural_contract_id varchar(50)        // ID from core banking
+
+  customer_key       int [not null]      // FK -> dim_customer
+  dealer_key         int [not null]      // FK -> dim_dealer
+  vehicle_key        int [not null]      // FK -> dim_vehicle
+  product_key        int [not null]      // FK -> dim_product
+  country_entity_key int [not null]      // FK -> dim_country_entity
+  orig_date_key      int [not null]      // FK -> dim_date
+  maturity_date_key  int                 // FK -> dim_date (nullable)
+  contract_status_key int [not null]     // FK -> dim_contract_status
+
+  approved_amount    numeric(12,2)
+  interest_rate      numeric(5,2)
+  term_months        int
+  ltv_pct            numeric(5,2)        // Loan-To-Value: loan / vehicle price
+  balloon_amount     numeric(12,2)       // for PCP
+  is_secured         boolean
+
+  // GRAIN: one row per retail finance contract.
+  // ONE customer, ONE dealer, ONE main vehicle, ONE product.
+}
+
+Table f_contract_wholesale {
+  wholesale_contract_key int [pk, increment]
+  dealer_key             int [not null]   // FK -> dim_dealer
+  vehicle_key            int             // FK -> dim_vehicle (optional, per-model)
+  product_key            int             // FK -> dim_product
+  country_entity_key     int [not null]  // FK -> dim_country_entity
+  start_date_key         int [not null]  // FK -> dim_date
+  end_date_key           int            // FK -> dim_date (nullable)
+
+  credit_limit_amount    numeric(12,2)
+  utilized_amount        numeric(12,2)
+  margin_bps             int             // margin in basis points
+
+  // GRAIN: one row per dealer wholesale credit line / floorplan agreement.
+}
+
+Table f_payment {
+  payment_key           int [pk, increment]
+  contract_key          int [not null]   // FK -> f_contract_retail
+  customer_key          int [not null]   // FK -> dim_customer
+  dealer_key            int              // FK -> dim_dealer
+  payment_date_key      int [not null]   // FK -> dim_date
+  country_entity_key    int [not null]   // FK -> dim_country_entity
+
+  scheduled_amount      numeric(12,2)
+  paid_amount           numeric(12,2)
+  principal_component   numeric(12,2)
+  interest_component    numeric(12,2)
+  fee_component         numeric(12,2)
+  dpd_at_payment        int              // Days Past Due at time of payment
+
+  // GRAIN: one row per actual payment or scheduled instalment.
+  // One contract can have MANY payments => 1:N relationship.
+}
+
+Table f_balance_daily {
+  balance_key           int [pk, increment]
+  contract_key          int [not null]   // FK -> f_contract_retail
+  date_key              int [not null]   // FK -> dim_date
+  country_entity_key    int [not null]   // FK -> dim_country_entity
+  contract_status_key   int [not null]   // FK -> dim_contract_status
+
+  outstanding_principal numeric(12,2)
+  accrued_interest      numeric(12,2)
+  dpd                   int              // Days Past Due at snapshot
+  ead_proxy             numeric(12,2)    // Exposure at Default proxy
+
+  // GRAIN: one row per contract per day (or month-end snapshot).
+  // Very large fact table – needs good partitioning/sort/distribution.
+}
+
+Table f_default_event {
+  default_event_key     int [pk, increment]
+  contract_key          int [not null]   // FK -> f_contract_retail
+  customer_key          int [not null]   // FK -> dim_customer
+  dealer_key            int [not null]   // FK -> dim_dealer
+  default_date_key      int [not null]   // FK -> dim_date
+  country_entity_key    int [not null]   // FK -> dim_country_entity
+
+  default_amount        numeric(12,2)
+  recovery_amount       numeric(12,2)
+  lgd_pct               numeric(5,2)     // Loss Given Default %
+
+  // GRAIN: one row per default event per contract.
+}
+
+
+// ============================
+// RELATIONSHIPS (PK/FK)
+// ============================
+
+// COUNTRY/ENTITY relationships
+Ref: dim_customer.country_entity_key    > dim_country_entity.country_entity_key
+Ref: dim_dealer.country_entity_key      > dim_country_entity.country_entity_key
+Ref: f_contract_retail.country_entity_key > dim_country_entity.country_entity_key
+Ref: f_contract_wholesale.country_entity_key > dim_country_entity.country_entity_key
+Ref: f_payment.country_entity_key       > dim_country_entity.country_entity_key
+Ref: f_balance_daily.country_entity_key > dim_country_entity.country_entity_key
+Ref: f_default_event.country_entity_key > dim_country_entity.country_entity_key
+
+// FACT -> DIM relationships (1:N)
+Ref: f_contract_retail.customer_key     > dim_customer.customer_key
+Ref: f_contract_retail.dealer_key       > dim_dealer.dealer_key
+Ref: f_contract_retail.vehicle_key      > dim_vehicle.vehicle_key
+Ref: f_contract_retail.product_key      > dim_product.product_key
+Ref: f_contract_retail.orig_date_key    > dim_date.date_key
+Ref: f_contract_retail.maturity_date_key > dim_date.date_key
+Ref: f_contract_retail.contract_status_key > dim_contract_status.contract_status_key
+
+Ref: f_contract_wholesale.dealer_key    > dim_dealer.dealer_key
+Ref: f_contract_wholesale.vehicle_key   > dim_vehicle.vehicle_key
+Ref: f_contract_wholesale.product_key   > dim_product.product_key
+Ref: f_contract_wholesale.start_date_key > dim_date.date_key
+Ref: f_contract_wholesale.end_date_key  > dim_date.date_key
+
+Ref: f_payment.contract_key             > f_contract_retail.contract_key
+Ref: f_payment.customer_key             > dim_customer.customer_key
+Ref: f_payment.dealer_key               > dim_dealer.dealer_key
+Ref: f_payment.payment_date_key         > dim_date.date_key
+
+Ref: f_balance_daily.contract_key       > f_contract_retail.contract_key
+Ref: f_balance_daily.date_key           > dim_date.date_key
+Ref: f_balance_daily.contract_status_key > dim_contract_status.contract_status_key
+
+Ref: f_default_event.contract_key       > f_contract_retail.contract_key
+Ref: f_default_event.customer_key       > dim_customer.customer_key
+Ref: f_default_event.dealer_key         > dim_dealer.dealer_key
+Ref: f_default_event.default_date_key   > dim_date.date_key
+
+
+//////////////////////////////////////////////////////
+// SCALING & SKEWNESS NOTES (DESIGN-LEVEL, NOT SQL)
+// (databasediagram ignores these comments; they are
+// just here to remind you for the interview.)
+//////////////////////////////////////////////////////
+
+// - Big fact tables: f_payment, f_balance_daily, f_contract_retail.
+//
+
