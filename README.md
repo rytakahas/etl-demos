@@ -1,41 +1,38 @@
-# etl-demos — Bank DWH Design (Star Schema) + Interview SQL
+# etl-demos — Bank DWH Design (Star Schema)
 
-This repo is a **mini, interview-ready Data Warehouse (DWH) demo** inspired by **European bank** analytics use-cases:
-**sales financing**, **portfolio / profitability**, **dealer performance**, and **credit risk**.
+This repo is a **mini Data Warehouse (DWH) demo** inspired by **European bank** analytics use-cases in **auto / dealer financing**: **sales financing**, **portfolio & profitability**, **dealer performance**, and **credit risk**.
 
 It is designed to be:
-- **Easy to explain in interviews**
 - **Cloud-agnostic** (maps cleanly to AWS / GCP / Azure)
 - **Practical** (ERD + SQL query pack)
+- **Bank-ready analytics model** (clear grain, keys, SCD, KPI mapping for auto/dealer finance)
 
 ---
 
 ## What's Inside (At a Glance)
 
 ### Design Artifacts
-- **`bank.dbml`** — **Star Schema ERD** (paste into dbdiagram.io / databasediagram.com)
-- **`bank.txt`** — **mock interview script** (table-by-table explanation: facts vs dimensions, keys, scaling)
+- **ERD (DBML):** [`bank.dbml`](./bank.dbml) *(open in dbdiagram.io / dbdiagram.com)*
+- **Model notes:** [`bank.txt`](./bank.dbml) *(table-by-table notes: facts vs dims, keys, history rules)*
 
 ### Query Pack
 - **`scripts/sql/`** — ready SQL examples:
   - profit, EV vs ICE trends, dealer ranking, risk-adjusted profit
 
-> Implementation can be done with dbt + a warehouse (Redshift/BigQuery/Snowflake/Postgres).
-> The focus of this repo is **modeling + analytics patterns**.
+> Implementation can be done with dbt + a warehouse (Redshift/BigQuery/Snowflake/Postgres).  
+> The focus of this repo is **modeling + analytics patterns** (the "why" and "how").
 
 ---
 
-## 0) Modeling Framework Used in This Repo (Conceptual → Logical → Physical)
+## 0) Modeling Framework Used (Conceptual → Logical → Physical)
 
-Think of it like:
-
-**Business → Blueprint → Implementation**
+Think of it like: **Business → Blueprint → Implementation**
 
 | Layer | What it answers | What it looks like in this repo |
-|------:|------------------|----------------------------------|
-| **Conceptual** (business view) | *What exists and why?* What are the processes, entities, relationships, KPIs? | **This README sections 1–2** (business questions, grain, core entities) |
-| **Logical** (tech-agnostic design) | *How do we represent it?* Facts/dims, keys, relationships, grain, history rules (SCD), naming | **`bank.dbml`** (ERD / star schema definition) + "facts/dims" sections below |
-| **Physical** (implementation details) | *How is it stored/optimized?* DDL, partitions, clustering/sort keys, indexes, constraints, access control, tests | **Warehouse-specific notes** in section 8 + SQL in `scripts/sql/` (and your future dbt/DDL folder if you add it) |
+|-------|-----------------|----------------------------------|
+| **Conceptual** (business view) | *What exists and why?* Processes, entities, relationships, KPIs | **Sections 1–2** (business questions, grain, core entities) |
+| **Logical** (tech-agnostic design) | *How do we represent it?* Facts/dims, keys, relationships, history rules (SCD) | **`bank.dbml`** + Sections 3–6 |
+| **Physical** (implementation details) | *How is it stored/optimized?* DDL, partitions, clustering/sort keys, indexes, constraints, tests | **Section 8** + `scripts/sql/` |
 
 ---
 
@@ -56,11 +53,13 @@ This bank analytics demo targets questions like:
 - Contract has **Balances over time** (snapshots)
 - Some contracts become **Default events** with **Recoveries**
 
+> Domain context: customers finance vehicle purchases through dealers (loan/lease/PCP), generating payments, balances, and potential default/recovery events.
+
 ---
 
 ## 2) Grain Statements (Conceptual → Logical Bridge)
 
-A strong interview move is to state **grain** early (what one row means).
+State **grain** early (what one row means).
 
 This demo uses these grains:
 
@@ -69,12 +68,11 @@ This demo uses these grains:
 - `f_balance_daily`: **1 row per contract per date** (daily or month-end snapshot)
 - `f_default_event`: **1 row per default event per contract** (default + recoveries)
 
-Dimensions are "descriptive lookup tables" used to slice facts:
-customer, dealer, vehicle, product, date, country/entity, status…
+Dimensions are descriptive lookup tables used to slice facts: customer, dealer, vehicle, product, date, country/entity, status…
 
 ---
 
-## 3) Schemas to Know for Interviews (And When to Use Them)
+## 3) Schemas to Know (When to Use Which)
 
 ### A) Star Schema (Kimball) — Recommended for Bank Analytics (Gold Layer)
 **Shape:** a central **fact** table connected to multiple **dimension** tables.
@@ -85,16 +83,15 @@ customer, dealer, vehicle, product, date, country/entity, status…
 Why it fits bank analytics:
 - Most questions are **aggregations** (volume/profit/risk by time/country/dealer/product)
 - BI tools (Tableau/Power BI) are optimized for facts + dims
-- Easy to extend and explain
+- Easy to extend and easy to explain
 
-> **Star schema is intentionally denormalized for analytics.**
+> **Star schema is intentionally denormalized for analytics.**  
 > Repeating foreign keys across fact rows is expected.
 
 ### B) Snowflake Schema — More Normalized Dimensions
 A snowflake schema is a star schema where dimensions are split into sub-dimensions.
 
-Example:
-`dim_customer` → `dim_city` → `dim_region` → `dim_country`
+Example: `dim_customer` → `dim_city` → `dim_region` → `dim_country`
 
 **Pros:**
 - Less duplication inside dimensions
@@ -105,7 +102,7 @@ Example:
 - Often not worth it for a first analytics milestone
 
 ### C) One Big Table (OBT) — Serving Layer (Not the "Truth")
-**OBT** is a **wide, denormalized table or view** that pre-joins facts + dims for easy BI.
+**OBT** is a wide denormalized table or view that pre-joins facts + dims.
 
 **Good for:**
 - Dashboards and ad-hoc analysis
@@ -139,7 +136,7 @@ Data Vault is often used between raw ingestion and marts when you need:
 
 ## 4) Logical Model (Star Schema) — From `bank.dbml`
 
-Open **`bank.dbml`** in dbdiagram.io to see the ERD.
+Open **[`bank.dbml`](./bank.dbml)** in dbdiagram.io to see the ERD.
 
 ### 4.1 Dimension Tables
 - `dim_country_entity` — geography + legal entity / partner bank
@@ -160,16 +157,16 @@ Open **`bank.dbml`** in dbdiagram.io to see the ERD.
 ### Star Mental Picture
 
 ```
-      dim_customer     dim_dealer
-           \           /
-            \         /
-             \       /
-          f_contract_retail   (FACT)
-           /   |       \
-          /    |        \
-  dim_vehicle  dim_product  dim_date
-                |
-         dim_country_entity
+        dim_customer     dim_dealer
+              \             /
+               \           /
+                \         /
+           f_contract_retail (FACT)
+                /    |    \
+               /     |     \
+      dim_vehicle  dim_product  dim_date
+                     |
+              dim_country_entity
 ```
 
 ---
@@ -207,15 +204,16 @@ Facts should join to the correct dim version for "as-of" reporting.
 - **EAD**: Exposure at Default (amount outstanding at default)
 
 **Expected Loss mental model:**
+
 ```
 Expected Loss ≈ PD × LGD × EAD
 ```
 
-**In this schema:**
-- PD signals/features come from **payments + balances + contract attributes**
-- NPL status comes from **DPD + contract_status** (often in balances/snapshots)
-- LGD is estimated from **defaults & recoveries** in `f_default_event`
-- EAD is proxied from **outstanding balance** in `f_balance_daily`
+In this schema:
+- **PD** signals/features come from payments + balances + contract attributes
+- **NPL** status comes from DPD + contract_status (often in balances/snapshots)
+- **LGD** is estimated from defaults & recoveries in `f_default_event`
+- **EAD** is proxied from outstanding balance in `f_balance_daily`
 
 ---
 
@@ -227,9 +225,9 @@ A typical layered implementation looks like:
 .
 ├── data/                # sample raw extracts (optional)
 ├── bank.dbml            # ERD (logical model)
-├── bank.txt             # interview script
+├── bank.txt             # model notes (facts/dims, keys, history rules)
 └── scripts/
-    └── sql/             # analytics queries (interview-ready)
+    └── sql/             # analytics queries
 ```
 
 If you extend to a full ETL/dbt demo, a common structure is:
@@ -251,16 +249,16 @@ Large facts (`f_payment`, `f_balance_daily`) should be optimized around query pa
 - Aggregating by time/country/fuel type
 
 #### Redshift-Style Guidance (Example)
-- **SORTKEY** by date on snapshot facts (time range queries)
-- **DISTKEY** on high-cardinality join keys like `contract_key` to reduce shuffle
+- `SORTKEY` by date on snapshot facts (time range queries)
+- `DISTKEY` on high-cardinality join keys like `contract_key` to reduce shuffle
 - Avoid distkey on low-cardinality fields (e.g., `country_entity_key`) to reduce skew
 
 #### BigQuery-Style Guidance (Example)
-- **Partition** large facts by `date_key` / `event_date`
-- **Cluster** by frequently filtered/joined keys (`contract_key`, `dealer_key`)
+- Partition large facts by `date_key` / `event_date`
+- Cluster by frequently filtered/joined keys (`contract_key`, `dealer_key`)
 - Use incremental loads and pre-aggregations for heavy dashboards
 
-### 8.2 Data Quality Tests (What Interviewers Like)
+### 8.2 Data Quality Tests
 Add automated checks (dbt tests or SQL assertions):
 - **Uniqueness**: contract business key uniqueness in the correct grain
 - **Not nulls**: keys and critical measures
@@ -269,9 +267,9 @@ Add automated checks (dbt tests or SQL assertions):
 
 ---
 
-## 9) SQL Query Pack (`scripts/sql/`)
+## 9) SQL Query Pack (scripts/sql/)
 
-Included "interview-ready" queries cover:
+Included queries cover:
 - Volume by segment
 - Dealer profit (best case: `est_lifetime_margin_eur`)
 - Dealer profit proxy (interest rate − funding rate)
@@ -279,7 +277,7 @@ Included "interview-ready" queries cover:
 - Dealer ranking by (country, fuel_type) using window functions
 - Monthly EV/Hybrid/ICE share trend
 
-**Example filenames:**
+Example filenames:
 - `query_customer_segment.sql`
 - `query_dealer_profit_margin_best.sql`
 - `query_dealer_profit_margin_proxy.sql`
@@ -289,11 +287,49 @@ Included "interview-ready" queries cover:
 
 ---
 
-## References (Verbal / Interview-Friendly)
+## 10) Extension: From Star Schema → Knowledge Graph (GraphRAG-ready)
+
+A star schema is the best default for aggregations and KPI reporting. A knowledge graph becomes valuable when your questions are relationship-heavy, require multi-hop reasoning, or need explainable paths (e.g., networks of dealers/customers/contracts, fraud rings, entity resolution across sources, lineage/explanations for "why did this risk score change?").
+
+### When a Graph Helps (Typical Bank Use-Cases)
+- **Fraud / collusion patterns**: shared phone/address, repeated VIN/vehicle across customers, suspicious dealer clusters
+- **Entity resolution**: merge "same" customers/dealers across systems (aliases, slightly different identifiers)
+- **Dealer network analysis**: communities, centrality, propagation effects (e.g., defaults concentrated in connected partners)
+- **Explainable risk paths**: "contract → dealer → region → historical default cluster"
+- **GraphRAG**: retrieve structured neighborhoods (k-hop subgraphs) as grounded context for an LLM
+
+### How It Fits the Layering
+A common hybrid architecture is:
+- **DWH (Star)** = truth for metrics (profitability, portfolio KPIs, risk KPIs)
+- **Graph** = truth for relationships (who/what connects to what, and how)
+
+You can export curated "gold" entities/relationships from the star schema into a graph store:
+- **Nodes**: Customer, Dealer, Contract, Vehicle, Product, Country/Entity
+- **Edges**: `CUSTOMER_SIGNED_CONTRACT`, `CONTRACT_AT_DEALER`, `CONTRACT_HAS_VEHICLE`, `CONTRACT_HAS_PRODUCT`, `CUSTOMER_LIVES_IN_REGION`, etc.
+
+### Guides (Linked)
+This repo is warehouse-first (star schema for KPI analytics). If you want to expand it with a data lake ingestion layer and/or a knowledge graph layer, these docs cover each path:
+
+**Data lake / raw ingestion (CSV loading patterns):**
+- `LOADING_NEW_DATA` (General "how to load CSV/new data" guide — not KG-specific.)
+
+**Knowledge Graph (Property Graph / Neo4j-style):**
+- `README_BANK_KG`
+
+**Knowledge Graph (RDF / ontology-first):**
+- `README_BANK_KG_RDF`
+
+Practical rule: start with the star schema (fast KPI value), then add (1) a lake ingestion layer for scalable raw inputs, and/or (2) a graph layer for relationship-first analytics and GraphRAG use cases.
+
+---
+
+## References
+
 - Kimball dimensional modeling (star schema)
 - Basel / IFRS-9 concepts (PD/LGD/EAD terminology)
 
 ---
 
 ## Notes
+
 All names and structures are demo-oriented and do not represent any real bank production schema.
