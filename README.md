@@ -311,13 +311,13 @@ You can export curated "gold" entities/relationships from the star schema into a
 This repo is warehouse-first (star schema for KPI analytics). If you want to expand it with a data lake ingestion layer and/or a knowledge graph layer, these docs cover each path:
 
 **Data lake / raw ingestion (CSV loading patterns):**
-- `LOADING_NEW_DATA` (General "how to load CSV/new data" guide — not KG-specific.)
+- [`LOADING_NEW_DATA`](https://github.com/rytakahas/etl-demos/blob/main/LOADING_NEW_DATA.md) (General "how to load CSV/new data" guide — not KG-specific.)
 
 **Knowledge Graph (Property Graph / Neo4j-style):**
-- `README_BANK_KG`
+- [`README_BANK_KG`](https://github.com/rytakahas/etl-demos/blob/main/README_BANK_KG.md)
 
 **Knowledge Graph (RDF / ontology-first):**
-- `README_BANK_KG_RDF`
+- [`README_BANK_KG_RDF`](https://github.com/rytakahas/etl-demos/blob/main/README_BANK_KG_RDF.md)
 
 Practical rule: start with the star schema (fast KPI value), then add (1) a lake ingestion layer for scalable raw inputs, and/or (2) a graph layer for relationship-first analytics and GraphRAG use cases.
 
