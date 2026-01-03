@@ -13,7 +13,7 @@ It is designed to be:
 
 ### Design Artifacts
 - **ERD (DBML):** [`bank.dbml`](./bank.dbml) *(open in dbdiagram.io / dbdiagram.com)*
-- **Model notes:** [`bank.txt`](./bank.dbml) *(table-by-table notes: facts vs dims, keys, history rules)*
+- **Model notes:** [`bank.txt`](./bank.txt) *(table-by-table notes: facts vs dims, keys, history rules)*
 
 ### Query Pack
 - **`scripts/sql/`** — ready SQL examples:
