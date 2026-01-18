@@ -1,4 +1,3 @@
-cat > kg/ontology/hb_bank_enriched.ttl <<'TTL'
 @prefix : <https://example.org/honda-bank/kg#> .
 @prefix hb: <https://example.org/honda-bank/kg#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
@@ -172,5 +171,3 @@ hb:vehicleKey a owl:DatatypeProperty, owl:FunctionalProperty ;
   rdfs:comment "Stable business key for Vehicle (string)."@en ;
   rdfs:domain hb:Vehicle ;
   rdfs:range xsd:string .
-TTL
-

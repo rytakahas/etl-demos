@@ -11,7 +11,7 @@ hb:ContractShape a sh:NodeShape ;
   ] ;
   sh:property [
     sh:path hb:hasDealer ;
-    sh:minCount 1 ;
+    sh:minCount 0 ;
   ] ;
   sh:property [
     sh:path hb:approvedAmount ;
