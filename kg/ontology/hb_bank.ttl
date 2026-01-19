@@ -1,16 +1,17 @@
 cat > kg/ontology/hb_bank_enriched.ttl <<'TTL'
-@prefix : <https://example.org/honda-bank/kg#> .
 @prefix hb: <https://example.org/honda-bank/kg#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
 
 hb: a owl:Ontology ;
   rdfs:label "Honda Bank (demo) Knowledge Graph Ontology"@en ;
   rdfs:comment "Tiny ontology to layer a semantic KG on top of an ETL/DWH. Adapt to your etl-demos marts."@en ;
-  owl:versionInfo "0.2.0"@en .
+  owl:versionInfo "0.2.1"@en .
 
 ### -----------------------
 ### Core classes
@@ -172,5 +173,24 @@ hb:vehicleKey a owl:DatatypeProperty, owl:FunctionalProperty ;
   rdfs:comment "Stable business key for Vehicle (string)."@en ;
   rdfs:domain hb:Vehicle ;
   rdfs:range xsd:string .
-TTL
 
+### -----------------------
+### Provenance (dataset-level)
+### -----------------------
+
+hb:DatasetRun a owl:Class ;
+  rdfs:label "Dataset run"@en ;
+  rdfs:comment "A pipeline run that generated a KG export (auditable build metadata)."@en .
+
+hb:gitCommit a owl:DatatypeProperty ;
+  rdfs:label "git commit"@en ;
+  rdfs:comment "Git commit SHA (or version tag) used to generate this export."@en ;
+  rdfs:domain hb:DatasetRun ;
+  rdfs:range xsd:string .
+
+hb:sourceModel a owl:DatatypeProperty ;
+  rdfs:label "source model"@en ;
+  rdfs:comment "A dbt model name or source artifact used to generate this export (repeatable property)."@en ;
+  rdfs:domain hb:DatasetRun ;
+  rdfs:range xsd:string .
+TTL
