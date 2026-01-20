@@ -38,7 +38,8 @@ with_keys as (
     'IN'        as country,
     null        as language,
     null        as income_band,
-    employment_type as occupation
+    employment_type as occupation,
+    coalesce(null, 'individual', age_band, 'unknown') as segment
   from enriched
 )
 
