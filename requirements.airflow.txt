@@ -1,0 +1,13 @@
+# Stable-ish pins (Python 3.11)
+pandas==2.1.4
+neo4j==5.20.0
+rdflib==7.0.0
+pyshacl==0.31.0
+
+# Local transformations
+# (use DuckDB locally to avoid running a warehouse server)
+dbt-core==1.7.9
+dbt-duckdb==1.7.5
+duckdb==0.10.3
+
+pytest==8.2.0
