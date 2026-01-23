@@ -5,11 +5,38 @@ models:
     columns:
       - name: customer_key
         tests: [not_null, unique]
+
   - name: dim_product
     columns:
       - name: product_key
         tests: [not_null, unique]
+
+  - name: dim_vehicle
+    columns:
+      - name: vehicle_key
+        tests: [not_null, unique]
+
+  - name: dim_country_entity
+    columns:
+      - name: country_entity_key
+        tests: [not_null, unique]
+
   - name: f_loan_contract
     columns:
       - name: loan_id
         tests: [not_null, unique]
+      - name: dealer_key
+        tests:
+          - relationships:
+              to: ref('dim_dealer')
+              field: dealer_key
+      - name: vehicle_key
+        tests:
+          - relationships:
+              to: ref('dim_vehicle')
+              field: vehicle_key
+      - name: country_entity_key
+        tests:
+          - relationships:
+              to: ref('dim_country_entity')
+              field: country_entity_key

@@ -8,6 +8,10 @@ sources:
       - name: loan_applications_raw
       - name: customers_raw
       - name: payments_raw
+      - name: dim_vehicle
+      - name: dim_country_entity
+      - name: f_default_event
+      - name: f_payment
 
 models:
   - name: stg_corebank_loans
@@ -16,13 +20,41 @@ models:
         tests: [not_null, unique]
       - name: customer_id
         tests: [not_null]
+
   - name: stg_corebank_customers
     columns:
       - name: customer_id
         tests: [not_null, unique]
+
   - name: stg_payments
     columns:
       - name: loan_id
         tests: [not_null]
       - name: payment_date
+        tests: [not_null]
+
+  - name: stg_dim_vehicle
+    columns:
+      - name: vehicle_key
+        tests: [not_null, unique]
+
+  - name: stg_dim_country_entity
+    columns:
+      - name: country_entity_key
+        tests: [not_null, unique]
+      - name: country_code
+        tests: [not_null]
+
+  - name: stg_f_default_event
+    columns:
+      - name: default_event_key
+        tests: [not_null, unique]
+      - name: contract_key
+        tests: [not_null]
+
+  - name: stg_f_payment
+    columns:
+      - name: payment_key
+        tests: [not_null, unique]
+      - name: contract_key
         tests: [not_null]

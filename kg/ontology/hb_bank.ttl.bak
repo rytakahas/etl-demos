@@ -1,0 +1,47 @@
+@prefix : <https://example.org/honda-bank/kg#> .
+@prefix hb: <https://example.org/honda-bank/kg#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+hb: a owl:Ontology ;
+  rdfs:label "Honda Bank (demo) Knowledge Graph Ontology"@en ;
+  rdfs:comment "Tiny ontology to layer a semantic KG on top of an ETL/DWH. Adapt to your etl-demos marts."@en .
+
+### Core classes
+hb:Customer a owl:Class .
+hb:Dealer a owl:Class .
+hb:Country a owl:Class .
+hb:Vehicle a owl:Class .
+hb:Contract a owl:Class .
+hb:DefaultEvent a owl:Class .
+
+### Object properties
+hb:hasCustomer a owl:ObjectProperty ; rdfs:domain hb:Contract ; rdfs:range hb:Customer .
+hb:hasDealer   a owl:ObjectProperty ; rdfs:domain hb:Contract ; rdfs:range hb:Dealer .
+hb:inCountry   a owl:ObjectProperty ; rdfs:domain hb:Contract ; rdfs:range hb:Country .
+hb:hasVehicle  a owl:ObjectProperty ; rdfs:domain hb:Contract ; rdfs:range hb:Vehicle .
+
+hb:forContract a owl:ObjectProperty ; rdfs:domain hb:DefaultEvent ; rdfs:range hb:Contract .
+
+### Datatype properties (keep it minimal and practical)
+hb:approvedAmount a owl:DatatypeProperty ; rdfs:domain hb:Contract ; rdfs:range xsd:decimal .
+hb:termMonths     a owl:DatatypeProperty ; rdfs:domain hb:Contract ; rdfs:range xsd:integer .
+hb:interestRate   a owl:DatatypeProperty ; rdfs:domain hb:Contract ; rdfs:range xsd:decimal .
+hb:fundingRate    a owl:DatatypeProperty ; rdfs:domain hb:Contract ; rdfs:range xsd:decimal .
+hb:originationDate a owl:DatatypeProperty ; rdfs:domain hb:Contract ; rdfs:range xsd:date .
+
+hb:fuelType       a owl:DatatypeProperty ; rdfs:domain hb:Vehicle ; rdfs:range xsd:string .
+hb:vehicleModel   a owl:DatatypeProperty ; rdfs:domain hb:Vehicle ; rdfs:range xsd:string .
+
+hb:defaultAmount  a owl:DatatypeProperty ; rdfs:domain hb:DefaultEvent ; rdfs:range xsd:decimal .
+hb:recoveryAmount a owl:DatatypeProperty ; rdfs:domain hb:DefaultEvent ; rdfs:range xsd:decimal .
+hb:eventDate      a owl:DatatypeProperty ; rdfs:domain hb:DefaultEvent ; rdfs:range xsd:date .
+
+### Labels
+hb:customerKey a owl:DatatypeProperty ; rdfs:domain hb:Customer ; rdfs:range xsd:string .
+hb:dealerKey   a owl:DatatypeProperty ; rdfs:domain hb:Dealer   ; rdfs:range xsd:string .
+hb:contractKey a owl:DatatypeProperty ; rdfs:domain hb:Contract ; rdfs:range xsd:string .
+hb:countryKey  a owl:DatatypeProperty ; rdfs:domain hb:Country  ; rdfs:range xsd:string .
+hb:vehicleKey  a owl:DatatypeProperty ; rdfs:domain hb:Vehicle  ; rdfs:range xsd:string .

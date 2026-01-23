@@ -1,0 +1,15 @@
+Star schema (center = FACT, points = DIMENSIONS)
+
+          dim_customer
+               *
+               |
+dim_vehicle  * | *  dim_dealer
+               |
+          f_contract_retail   (FACT)
+               |
+        *  *   |   *   *
+ dim_product  dim_date  dim_country_entity  dim_contract_status
+
+Rule of thumb:
+- FACT = "verbs" (events/measurements): contract originated, payment made, balance snapshot, default event
+- DIM  = "nouns" (descriptors): customer, dealer, vehicle, product, date, geography, status

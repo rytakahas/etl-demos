@@ -1,0 +1,20 @@
+source_layer,source_object,source_column,kg_term_type,kg_term,notes
+gold,dim_customer,customer_id,Class,hb:Customer,IRI: ...#Customer/{customer_id} ; key property hb:customerKey
+gold,dim_dealer,dealer_id,Class,hb:Dealer,IRI: ...#Dealer/{dealer_id} ; key property hb:dealerKey
+gold,dim_vehicle,vehicle_id,Class,hb:Vehicle,IRI: ...#Vehicle/{vehicle_id} ; key property hb:vehicleKey
+gold,dim_country_entity,country_code,Class,hb:Country,IRI: ...#Country/{country_code} ; key property hb:countryKey
+gold,f_loan_contract,contract_id,Class,hb:Contract,IRI: ...#Contract/{contract_id} ; key property hb:contractKey
+gold,f_loan_contract,customer_id,ObjectProperty,hb:hasCustomer,Contract -> Customer (required)
+gold,f_loan_contract,dealer_id,ObjectProperty,hb:hasDealer,Contract -> Dealer (optional/required per policy)
+gold,f_loan_contract,vehicle_id,ObjectProperty,hb:hasVehicle,Contract -> Vehicle
+gold,f_loan_contract,country_code,ObjectProperty,hb:inCountry,Contract -> Country
+gold,f_loan_contract,approved_amount,DatatypeProperty,hb:approvedAmount,xsd:decimal
+gold,f_loan_contract,term_months,DatatypeProperty,hb:termMonths,xsd:integer
+gold,f_loan_contract,interest_rate,DatatypeProperty,hb:interestRate,xsd:decimal
+gold,f_loan_contract,funding_rate,DatatypeProperty,hb:fundingRate,xsd:decimal
+gold,f_loan_contract,origination_date,DatatypeProperty,hb:originationDate,xsd:date
+gold,f_default_event,contract_id,ObjectProperty,hb:forContract,DefaultEvent -> Contract (required)
+gold,f_default_event,contract_id+event_date,Class,hb:DefaultEvent,IRI: ...#DefaultEvent/{contract_id}-{event_date}
+gold,f_default_event,event_date,DatatypeProperty,hb:eventDate,xsd:date
+gold,f_default_event,default_amount,DatatypeProperty,hb:defaultAmount,xsd:decimal
+gold,f_default_event,recovery_amount,DatatypeProperty,hb:recoveryAmount,xsd:decimal
