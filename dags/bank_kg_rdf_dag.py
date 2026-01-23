@@ -12,18 +12,22 @@ from airflow.providers.standard.operators.python import PythonOperator
 from neo4j import GraphDatabase
 from neo4j.exceptions import ClientError
 
-
 # -----------------------------------------------------------------------------
-# Neo4j connection
+# Neo4j connection (Neo4j Docker on Mac: host 7688->container 7687)
 # -----------------------------------------------------------------------------
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://host.docker.internal:7687")
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://host.docker.internal:7688")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")  # must match NEO4J_AUTH
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "Password123")
+NEO4J_DATABASE = os.getenv("NEO4J_DB", "neo4j")
 
-# Repo paths inside Astro containers
 REPO_ROOT = Path("/usr/local/airflow")
 CYPHER_DIR = REPO_ROOT / "kg" / "neo4j" / "cypher"
+
+# Canonical artifact locations (Neo4j mounts ../ontology -> /var/lib/neo4j/import)
+RAW_TTL = "kg/ontology/hb_bank_data.ttl"
+ENR_TTL = "kg/ontology/hb_bank_enriched.ttl"
+ONTO_TTL = "kg/ontology/hb_bank.ttl"
+SHAPES_TTL = "kg/shacl/hb_bank.shapes.ttl"  # or keep bank_shapes.ttl if you prefer
 
 
 def neo4j_driver():
@@ -31,10 +35,8 @@ def neo4j_driver():
 
 
 def wait_for_neo4j(timeout_s: int = 300) -> None:
-    """Wait until Neo4j Bolt is reachable + auth works."""
     deadline = time.time() + timeout_s
     last_err = None
-
     while time.time() < deadline:
         try:
             driver = neo4j_driver()
@@ -48,37 +50,25 @@ def wait_for_neo4j(timeout_s: int = 300) -> None:
             last_err = repr(e)
             print(f"Neo4j not ready yet: {last_err}")
             time.sleep(5)
-
     raise RuntimeError(f"Neo4j not ready after {timeout_s}s. Last error: {last_err}")
 
 
 def run_cypher_file(path: Path, *, ignore_n10s_nonempty: bool = False) -> None:
-    """
-    Execute a .cypher file, splitting on semicolons.
-    Also prints any returned rows (so you can see triplesLoaded/triplesParsed in logs).
-    """
     cypher = path.read_text(encoding="utf-8")
     statements = [s.strip() for s in cypher.split(";") if s.strip()]
-
     driver = neo4j_driver()
     try:
         with driver.session(database=NEO4J_DATABASE) as sess:
             for stmt in statements:
                 try:
                     res = sess.run(stmt)
-
-                    # Print results if any (helps for n10s import calls)
                     rows = res.data()
                     if rows:
                         print(f"[Cypher result] {path.name} :: {rows[:5]}")
-
                     res.consume()
-
                 except ClientError as e:
                     msg = str(e)
                     code = getattr(e, "code", None)
-
-                    # Make n10s init idempotent: if graph is not empty, skip init.
                     if (
                         ignore_n10s_nonempty
                         and "n10s.graphconfig.init" in stmt
@@ -90,7 +80,6 @@ def run_cypher_file(path: Path, *, ignore_n10s_nonempty: bool = False) -> None:
                     ):
                         print(f"Skipping n10s init (already configured / graph not empty). code={code}")
                         continue
-
                     raise
     finally:
         driver.close()
@@ -102,30 +91,19 @@ def validate_graph_and_write_visualize() -> None:
         with driver.session(database=NEO4J_DATABASE) as sess:
             nodes = sess.run("MATCH (n) RETURN count(n) AS n").single()["n"]
             rels = sess.run("MATCH ()-[r]->() RETURN count(r) AS n").single()["n"]
-            rel_types = [
-                r["t"]
-                for r in sess.run(
-                    "MATCH ()-[r]->() RETURN DISTINCT type(r) AS t ORDER BY t LIMIT 50"
-                )
-            ]
     finally:
         driver.close()
 
     if nodes == 0 or rels == 0:
-        raise RuntimeError(
-            f"KG validation failed: nodes={nodes}, rels={rels}, rel_types={rel_types}"
-        )
+        raise RuntimeError(f"KG validation failed: nodes={nodes}, rels={rels}")
 
     out = CYPHER_DIR / "ready_to_visualize.cypher"
     out.write_text("MATCH p=(a)-[r]->(b)\nRETURN p\nLIMIT 50;\n", encoding="utf-8")
-    print(f"validation ok: nodes={nodes}, rels={rels}, rel_types={rel_types}")
+    print(f"validation ok: nodes={nodes}, rels={rels}")
     print(f"wrote {out}")
 
 
-default_args = {
-    "retries": 5,
-    "retry_delay": timedelta(seconds=20),
-}
+default_args = {"retries": 5, "retry_delay": timedelta(seconds=20)}
 
 with DAG(
     dag_id="bank_kg_rdf_load",
@@ -136,80 +114,70 @@ with DAG(
     default_args=default_args,
 ) as dag:
 
-    # 1) Build warehouse models + tests (dbt build = run + test)
     dbt_build = BashOperator(
         task_id="dbt_build",
         cwd=str(REPO_ROOT / "dbt"),
         bash_command="dbt build --profiles-dir .",
     )
 
-    # 2) Export RDF data graph (Turtle)
+    # Export RAW TTL to kg/ontology (this is what Neo4j imports via /var/lib/neo4j/import)
     export_ttl = BashOperator(
         task_id="export_ttl",
         cwd=str(REPO_ROOT),
         bash_command=(
-            "mkdir -p kg/neo4j/import && chmod 777 kg/neo4j/import && "
-            "python kg/export/export_bank_kg_data_ttl.py "
-            "--data-dir data "
-            "--out kg/neo4j/import/hb_bank_data.ttl"
+            f"python kg/export/export_bank_kg_data_ttl.py "
+            f"--data-dir data "
+            f"--out {RAW_TTL}"
         ),
     )
 
-    patch_ttl = BashOperator(
-        task_id="patch_ttl_missing_customer",
+    # Enrich using your YAML-driven rules (replaces patch scripts for generalization)
+    enrich_ttl = BashOperator(
+        task_id="enrich_ttl",
         cwd=str(REPO_ROOT),
-        bash_command="python kg/export/patch_missing_hasCustomer.py",
+        bash_command=(
+            f"python kg/export/enrich_bank_data_ttl.py "
+            f"--config kg/config/enrichment_rules.yaml "
+            f"--in {RAW_TTL} "
+            f"--out {ENR_TTL}"
+        ),
     )
 
-    # 3) SHACL validate exported Turtle (quality gate)
+    # SHACL validate the enriched TTL (quality gate)
     shacl_validate = BashOperator(
         task_id="shacl_validate",
         cwd=str(REPO_ROOT),
         bash_command=(
-            "python -m pyshacl "
-            "-s kg/shacl/bank_shapes.ttl "
-            "-d kg/neo4j/import/hb_bank_data.ttl"
+            f"python kg/validation/validate_shacl.py "
+            f"--data {ENR_TTL} "
+            f"--shapes {SHAPES_TTL} "
+            f"--ontology {ONTO_TTL} "
+            f"--inference rdfs "
+            f"--out kg/export/shacl_report.ttl"
         ),
     )
 
-    # 4) Copy ontology into Neo4j import folder
-    copy_ontology = BashOperator(
-        task_id="copy_ontology_to_import",
-        cwd=str(REPO_ROOT),
-        bash_command=(
-            "mkdir -p kg/neo4j/import && chmod 777 kg/neo4j/import && "
-            "cp -f kg/ontology/hb_bank.ttl kg/neo4j/import/hb_bank.ttl"
-        ),
-    )
-
-    # 5) Wait for Neo4j
     wait_neo4j = PythonOperator(
         task_id="wait_neo4j",
         python_callable=wait_for_neo4j,
         op_kwargs={"timeout_s": 300},
     )
 
-    # 6) Apply constraints (keys/uniqueness)
     neo4j_constraints = PythonOperator(
         task_id="neo4j_constraints",
         python_callable=lambda: run_cypher_file(CYPHER_DIR / "00_constraints.cypher"),
     )
 
-    # 7) Initialize n10s config (idempotent)
     neo4j_n10s_init = PythonOperator(
         task_id="neo4j_n10s_init",
-        python_callable=lambda: run_cypher_file(
-            CYPHER_DIR / "01_n10s_init.cypher", ignore_n10s_nonempty=True
-        ),
+        python_callable=lambda: run_cypher_file(CYPHER_DIR / "01_n10s_init.cypher", ignore_n10s_nonempty=True),
     )
 
-    # 8) Import ontology + data (this will now print triplesLoaded/triplesParsed in logs)
     neo4j_import = PythonOperator(
         task_id="neo4j_import",
         python_callable=lambda: run_cypher_file(CYPHER_DIR / "02_import_ontology_and_data.cypher"),
     )
 
-    # 9) Validate graph and generate a helper query for visualization
     neo4j_validate = PythonOperator(
         task_id="neo4j_validate",
         python_callable=validate_graph_and_write_visualize,
@@ -218,12 +186,12 @@ with DAG(
     (
         dbt_build
         >> export_ttl
-        >> patch_ttl
+        >> enrich_ttl
         >> shacl_validate
-        >> copy_ontology
         >> wait_neo4j
         >> neo4j_constraints
         >> neo4j_n10s_init
         >> neo4j_import
         >> neo4j_validate
     )
+
