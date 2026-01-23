@@ -1,22 +1,32 @@
 # Banking DWH → RDF/OWL → Neo4j (n10s) + SHACL + GraphRAG
 
-This path adds a **semantic layer** (RDF/OWL ontology) on top of the warehouse, exports data as **Turtle (.ttl)**, validates it with **SHACL**, then imports both **ontology + data** into **Neo4j** using **Neosemantics (n10s)**.
+This path adds a **semantic layer** (RDF/OWL ontology) on top of the warehouse, exports data as **Turtle (.ttl)**, validates it with **TTL lint + SHACL**, then imports both **ontology + validated data** into **Neo4j** using **Neosemantics (n10s)**.
+
+This is the "serious" KG pipeline:
+- Canonical ontology (TBox) is frozen in version control
+- Data exports are validated before they touch Neo4j
+- Neo4j imports the **validated enriched** TTL (not raw)
 
 ---
 
-## 1) Ontology (semantic model)
+## 1) Canonical KG schema (freeze the contract)
 
-### What you already have
-Your `kg/ontology/hb_bank.ttl` includes:
-- an `owl:Ontology` header with label/comment
-- core classes (`Customer`, `Dealer`, `Country`, `Vehicle`, `Contract`, `DefaultEvent`)
-- object + datatype properties with `rdfs:domain` / `rdfs:range`
+### TBox (ontology)
+- `kg/ontology/hb_bank.ttl`
+  - `owl:Ontology` header (label/comment/version)
+  - core classes (`Customer`, `Dealer`, `Country`, `Vehicle`, `Contract`, `Payment`, `DefaultEvent`, …)
+  - object + datatype properties with `rdfs:domain` / `rdfs:range`
+  - canonical predicates used downstream (`amountPaid`, `daysPastDue`, `eventType`, `model`, …)
 
-### What to add next (recommended)
-To make the ontology usable for humans and downstream GenAI:
-- `rdfs:label` and `rdfs:comment` for **each class/property**
-- optional `skos:definition` for crisp business definitions
-- (optional) `owl:FunctionalProperty` for key properties
+### Constraints (SHACL)
+- `kg/shacl/hb_bank.shapes.ttl` (canonical shapes)
+  - defines "required" vs "optional" fields (fail fast)
+
+### Validation gates (must pass)
+- `kg/validation/validate_ttl.py`  
+  TTL parse + lint (schema drift, undeclared predicates, missing labels/domain/range)
+- `kg/validation/validate_shacl.py`  
+  SHACL validation (cardinality, types, required fields)
 
 ---
 
@@ -32,75 +42,181 @@ dbt test
 
 ---
 
-## 3) Export marts → Turtle (.ttl)
-Use the exporter in `kg/export/` (e.g., `export_bank_kg_data_ttl.py`) to generate a data graph in Turtle.
+## 3) Export marts → Turtle (.ttl) (raw)
 
-Good practice:
-- Mint stable IRIs for each entity (Customer/Contract/Dealer/Vehicle/…)
-- Emit object-property triples for relationships
-- Emit literal triples for measures/dates (datatype properties)
+Exporter:
 
----
+```
+kg/export/export_bank_kg_data_ttl.py
+```
 
-## 4) Validate RDF with SHACL (fail fast)
-Your shapes live in: `kg/shacl/bank_shapes.ttl`.
+Guidelines:
 
-Example validator:
+- mint stable IRIs (Customer/<id>, Contract/<id>, …)
+- emit object-property triples for relationships
+- emit typed literals for measures/dates
+
+Example:
+
 ```bash
-pip install pyshacl rdflib
-pyshacl -s kg/shacl/bank_shapes.ttl -d kg/neo4j/import/hb_bank_data.ttl
+python kg/export/export_bank_kg_data_ttl.py \
+  --data-dir data \
+  --out kg/ontology/hb_bank_data.ttl
 ```
 
 ---
 
-## 5) Load ontology + data into Neo4j (n10s)
+## 4) Enrichment (config-driven safety net) → Turtle (enriched)
 
-### Start Neo4j
+Enrichment exists to reduce fragility and minimize code edits when datasets vary.
+Rules are declarative:
+
+```
+kg/config/enrichment_rules.yaml
+```
+
+- default unknown nodes (e.g., Customer/UNKNOWN)
+- alias predicates (paidAmount → amountPaid)
+- required field synthesis (demo-friendly defaults)
+
+Enricher:
+
+```
+kg/export/enrich_bank_data_ttl.py
+```
+
+Example:
+
+```bash
+python kg/export/enrich_bank_data_ttl.py \
+  --config kg/config/enrichment_rules.yaml \
+  --in  kg/ontology/hb_bank_data.ttl \
+  --out kg/ontology/hb_bank_enriched.ttl
+```
+
+---
+
+## 5) Validate RDF (fail fast)
+
+### 5.1 TTL lint (schema drift + hygiene)
+
+```bash
+python kg/validation/validate_ttl.py \
+  --in kg/ontology/hb_bank.ttl kg/ontology/hb_bank_enriched.ttl \
+  --out kg/export/ttl_report.json
+```
+
+### 5.2 SHACL (data integrity)
+
+```bash
+python kg/validation/validate_shacl.py \
+  --data kg/ontology/hb_bank_enriched.ttl \
+  --shapes kg/shacl/hb_bank.shapes.ttl \
+  --ontology kg/ontology/hb_bank.ttl \
+  --inference rdfs \
+  --out kg/export/shacl_report.ttl
+```
+
+Only validated TTL should be loaded into Neo4j.
+
+---
+
+## 6) Load ontology + validated data into Neo4j (n10s)
+
+### Start Neo4j (Docker on Mac)
+
 ```bash
 cd kg/neo4j
 docker compose up -d
 ```
 
+**Important**: Neo4j imports from `/var/lib/neo4j/import`.
+This repo mounts `kg/ontology/` into Neo4j import dir, so Neo4j can load:
+
+- `hb_bank.ttl`
+- `hb_bank_enriched.ttl`
+
 ### Run the provided Cypher scripts
-- `00_constraints.cypher`
-- `01_n10s_init.cypher`
-- `02_import_ontology_and_data.cypher`
-- `03_validate.cypher`
+
+- `kg/neo4j/cypher/00_constraints.cypher`
+- `kg/neo4j/cypher/01_n10s_init.cypher`
+- `kg/neo4j/cypher/02_import_ontology_and_data.cypher`
+  (should import hb_bank.ttl + hb_bank_enriched.ttl)
+- `kg/neo4j/cypher/03_validate.cypher`
+- `kg/neo4j/cypher/04_graphrag_indexes.cypher` (GraphRAG-ready indexes)
 
 ---
 
-## 6) Validate in Neo4j (integrity + reconciliation)
-Optionally compare marts row counts to Neo4j counts using `kg/scripts/neo4j_counts.py`.
+## 7) Validate in Neo4j (integrity + reconciliation)
+
+Graph DQ queries:
+
+- `kg/neo4j/cypher/03_validate.cypher`
+- `kg/neo4j/cypher/queries/*.cypher`
+
+Optional reconciliation:
+
+```
+kg/scripts/neo4j_counts.py
+```
 
 ---
 
-## 7) GraphRAG interface (indexing + retrieval)
+## 8) GraphRAG interface (indexes + retrieval)
 
-### Recommended schema (minimal)
+### Neo4j-side indexes (already scripted)
+
+```
+kg/neo4j/cypher/04_graphrag_indexes.cypher
+```
+
+### Optional doc indexing (unstructured → Neo4j)
+
+Script:
+
+```
+kg/graphrag/index_graphrag_docs.py
+```
+
+Target schema (minimal):
+
 - `(:Document {doc_id, source, title})`
 - `(:Chunk {chunk_id, text, embedding})`
 - `(:Chunk)-[:MENTIONS]->(:Customer|:Contract|...)`
 
-### Create indexes (example)
-```cypher
-// Vector index for embeddings (adjust dimension & similarity)
-CREATE VECTOR INDEX chunk_embedding IF NOT EXISTS
-FOR (c:Chunk)
-ON (c.embedding)
-OPTIONS {indexConfig: {`vector.dimensions`: 384, `vector.similarity_function`: 'cosine'}};
-
-// Full-text index for keyword search
-CREATE FULLTEXT INDEX chunk_text IF NOT EXISTS
-FOR (c:Chunk)
-ON EACH [c.text];
-```
-
-### Neo4j GraphRAG Python package (optional)
-Neo4j provides a GraphRAG Python package with retrievers/pipelines for GenAI apps.
-
 ---
 
 ## Orchestration (Airflow)
-A practical “fail-fast” ordering is:
 
-`dbt_run → dbt_test → export_ttl → shacl_validate → neo4j_import → post_validate`
+A practical "fail-fast" ordering:
+
+```
+dbt_build → export_ttl → enrich_ttl → validate_ttl → validate_shacl → neo4j_import → post_validate
+```
+
+Notes:
+
+- avoid multiple DAGs writing the same `hb_bank_enriched.ttl` concurrently
+- publish "latest" artifacts only after validation passes
+
+---
+
+## Troubleshooting
+
+### Port conflicts (Neo4j/Postgres)
+
+If you see "port already allocated", stop old containers or remap ports in docker-compose.
+
+### Neo4j connectivity from Airflow
+
+Avoid connecting to the wrong Neo4j instance:
+
+- keep one "publisher" pipeline writing `hb_bank_enriched.ttl`
+- ensure Airflow connects to the correct host/port and credentials
+
+### SHACL fails
+
+Inspect `kg/export/shacl_report.ttl` to see which nodes violated which rule, then:
+
+- adjust enrichment rules (`kg/config/enrichment_rules.yaml`)
+- or adjust shapes if a field should be optional (rare; prefer enrichment)
