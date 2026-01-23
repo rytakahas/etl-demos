@@ -1,0 +1,30 @@
+services:
+  # Only touch scheduler: tasks run here (BashOperator/PythonOperator)
+  scheduler:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./kg/neo4j/import:/usr/local/airflow/kg/neo4j/import
+
+  # Neo4j as an extra service
+  neo4j:
+    image: neo4j:5
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: "neo4j/password"
+      NEO4JLABS_PLUGINS: '["n10s"]'
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "512m"
+      NEO4J_server_memory_pagecache_size: "512m"
+    volumes:
+      - ./kg/neo4j/import:/var/lib/neo4j/import
+      - ./kg/neo4j/plugins:/plugins
+      - ./kg/neo4j/data:/data
+      - ./kg/neo4j/logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30

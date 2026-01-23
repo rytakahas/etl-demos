@@ -3,3 +3,5 @@ google-cloud-bigquery>=3.17.0
 pandas>=2.1.0
 neo4j>=5.20.0
 rdflib>=7.0.0
+pyshacl
+

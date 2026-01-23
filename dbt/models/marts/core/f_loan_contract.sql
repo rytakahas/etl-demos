@@ -6,26 +6,27 @@ with loans as (
 
 joined as (
   select
-    -- Natural key from Kaggle dataset
     l.loan_id,
 
-    -- Dimension keys
     c.customer_key,
     p.product_key,
     d.dealer_key,
     dd.date_key as origination_date_key,
 
-    -- Measures
+    -- DEMO mapping (synthetic): map loan_id -> vehicle_key 1..10
+    cast(mod(coalesce(safe_cast(l.loan_id as int64), 0), 10) + 1 as int64) as vehicle_key,
+
+    -- DEMO mapping (synthetic): map all to DE (1) unless you have real country in source
+    cast(1 as int64) as country_entity_key,
+
     l.loan_amount        as amount_financed,
     l.ltv_ratio,
     l.asset_cost,
     l.primary_instal_amt,
     l.sec_instal_amt,
 
-    -- Label (target)
     l.loan_default,
 
-    -- Stub fields for bank-like schema
     cast(null as numeric) as interest_rate,
     cast(null as int64)   as term_months,
     cast(null as numeric) as down_payment,

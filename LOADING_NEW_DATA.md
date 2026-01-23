@@ -282,3 +282,4 @@ If the auto-mapper doesn't work for your dataset:
 4. Restart and test
 
 The auto-mapper handles 90% of common cases, but custom datasets may need manual tweaking!
+
