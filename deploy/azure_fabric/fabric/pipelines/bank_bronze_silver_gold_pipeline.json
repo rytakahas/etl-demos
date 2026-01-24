@@ -1,0 +1,53 @@
+{
+  "name": "bank_bronze_silver_gold_pipeline",
+  "description": "PLACEHOLDER: Create in Fabric UI and sync via Git integration. This JSON documents the intended activities and parameters.",
+  "parameters": {
+    "run_date": {
+      "type": "string",
+      "defaultValue": "@utcNow()"
+    },
+    "raw_base_path": {
+      "type": "string",
+      "defaultValue": "onelake://.../bank/raw/"
+    },
+    "silver_db": {
+      "type": "string",
+      "defaultValue": "bank_silver"
+    },
+    "gold_db": {
+      "type": "string",
+      "defaultValue": "bank_gold"
+    },
+    "kgd_db": {
+      "type": "string",
+      "defaultValue": "bank_gold"
+    }
+  },
+  "activities": [
+    {
+      "name": "bronze_ingest",
+      "type": "Copy",
+      "notes": "Copy/shortcut raw data into Bronze tables/files"
+    },
+    {
+      "name": "silver_transform",
+      "type": "Notebook",
+      "notes": "Spark notebook: clean + conform \u2192 Silver Delta"
+    },
+    {
+      "name": "gold_marts",
+      "type": "Sql",
+      "notes": "Warehouse SQL to build Gold marts"
+    },
+    {
+      "name": "kgd_refresh",
+      "type": "Sql",
+      "notes": "Create/refresh KGD node/edge tables/views"
+    },
+    {
+      "name": "export_job_trigger",
+      "type": "Webhook",
+      "notes": "Optional: trigger Container Apps Job to export/validate/load"
+    }
+  ]
+}

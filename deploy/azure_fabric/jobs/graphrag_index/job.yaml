@@ -1,0 +1,16 @@
+# Azure Container Apps Job template (placeholder/spec)
+name: bank-kg-graphrag-index
+triggerType: Schedule
+replicaTimeout: 3600
+replicaRetryLimit: 1
+container:
+  image: <ACR_NAME>.azurecr.io/bank-kg-graphrag:rc-1.1.0
+  env:
+    - name: DOCS_DIR
+      value: /mnt/docs
+    - name: NEO4J_URI
+      secretRef: neo4j-uri
+    - name: NEO4J_USER
+      secretRef: neo4j-user
+    - name: NEO4J_PASSWORD
+      secretRef: neo4j-password

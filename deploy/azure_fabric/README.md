@@ -1,92 +1,78 @@
-# Azure / Microsoft Fabric production runbook (client tenant)
+# Azure / Microsoft Fabric deployment runbook (Azure-first)
 
-This runbook describes how to deploy the same pipeline in a **client tenant**.
+This folder contains **deployment artifacts** to run the end-to-end pipeline in a **client tenant**:
 
-You keep the logic (dbt models, ontology, SHACL rules, Cypher) in Git and map runtime services:
+**ADLS/OneLake (Bronze) → Fabric Lakehouse/Warehouse (Silver/Gold) → KGD tables → RDF export (TTL) → TTL+SHACL gates → Neo4j (n10s import) → GraphRAG indexes**
 
-- Orchestration: Airflow DAG → Fabric Data Factory / Azure Data Factory pipelines
-- Storage: local folders → OneLake / ADLS Gen2
-- Warehouse: DuckDB → Fabric Warehouse (or Snowflake)
-- KG validation: SHACL job
-- Graph: Neo4j + n10s
+> This repo avoids hardcoding tenant IDs / workspace IDs. Put environment-specific values in Key Vault or CI/CD secrets.
 
----
+## 0) What is the contract (versioned API)
+- Ontology (TBox): `kg/ontology/hb_bank.ttl`
+- SHACL constraints: `kg/shacl/hb_bank.shapes.ttl`
+- Quality gates: `kg/validation/validate_ttl.py`, `kg/validation/validate_shacl.py`
+- Neo4j migrations/import: `kg/neo4j/cypher/00..04_*.cypher`
+- Export + enrich: `kg/export/export_bank_kg_data_ttl.py`, `kg/export/enrich_bank_data_ttl.py`, `kg/config/enrichment_rules.yaml`
 
-## 1) Container registry (ACR)
+These files should be reviewed like an API.
 
-Authenticate:
-```bash
-az login
-az acr login --name <ACR_NAME>
-```
+## 1) Fabric workspace (GitOps)
+1. Create Fabric workspaces: **dev / test / prod** (or just dev first).
+2. Enable Fabric Git integration and connect the **dev workspace** to this repo/branch.
+3. Import/author the Fabric items under `deploy/azure_fabric/fabric/`:
+   - pipelines (Data Factory)
+   - notebooks (Spark)
+   - SQL scripts (Warehouse)
 
-Docs:
-```text
-https://learn.microsoft.com/en-us/cli/azure/acr?view=azure-cli-latest
-https://learn.microsoft.com/en-us/azure/container-registry/container-registry-authentication
-```
+> Execution is usually via **schedule/event triggers** in Fabric. Use REST APIs mainly for inventory/monitoring.
 
-Build + push (example):
-```bash
-ACR_LOGIN_SERVER="<acr>.azurecr.io"
-docker build -f docker/Dockerfile.airflow -t ${ACR_LOGIN_SERVER}/bankkg-airflow:0.1.0 .
-docker push ${ACR_LOGIN_SERVER}/bankkg-airflow:0.1.0
-```
+## 2) Data landing (Bronze)
+- Raw files arrive in ADLS Gen2 (or OneLake) paths like:
+  - `.../bank/raw/payments/dt=YYYY-MM-DD/*.parquet`
 
----
+Trigger options:
+- **Event trigger** (file arrival) OR
+- **Schedule trigger** (hourly/daily)
 
-## 2) Azure Artifacts (private python feeds) — optional
+## 3) Silver/Gold in Fabric
+- Bronze → Silver: notebooks/pipelines parse, dedupe, conform.
+- Silver → Gold: Warehouse SQL (or dbt-in-container) builds marts.
 
-If the client uses Azure DevOps Artifacts feeds:
-```text
-https://learn.microsoft.com/en-us/azure/devops/artifacts/python/project-setup-python?view=azure-devops
-https://learn.microsoft.com/en-us/azure/devops/artifacts/quickstarts/python-packages?view=azure-devops
-```
+See:
+- `deploy/azure_fabric/sql/gold_marts/`
+- `deploy/azure_fabric/sql/kgd/`
 
----
+## 4) KGD tables (graph export layer)
+Create graph-ready tables/views from Gold (idempotent, stable IDs):
 
-## 3) Fabric Data Factory pipelines
+- Nodes: `kg_node_customer`, `kg_node_contract`, `kg_node_payment`, `kg_node_default_event`, ...
+- Edges: `kg_edge_contract_has_customer`, `kg_edge_contract_has_payment`, ...
 
-Create pipelines that mirror the DAG stages:
+## 5) RDF export + quality gates (Container Apps Job)
+Recommended: run Python export/enrich/validate + Neo4j load as an **Azure Container Apps Job**.
 
-1) Bronze ingest (batch + optional streaming)
-2) Silver/Gold transforms (SQL notebooks or dbt job)
-3) Export TTL (notebook/container job)
-4) SHACL validate (notebook/container job)
-5) Neo4j import (container job / AKS job)
+Provided under:
+- `deploy/azure_fabric/jobs/kg_export_validate_load/`
 
-Docs:
-```text
-https://learn.microsoft.com/en-us/fabric/data-factory/
-https://learn.microsoft.com/en-us/fabric/data-factory/pipeline-overview
-https://learn.microsoft.com/en-us/fabric/data-factory/tutorial-end-to-end-pipeline
-```
+## 6) Neo4j load + post-load checks
+The job runs:
+- `kg/neo4j/cypher/00_constraints.cypher`
+- `kg/neo4j/cypher/01_n10s_init.cypher`
+- `kg/neo4j/cypher/02_import_ontology_and_data.cypher`
+- `kg/neo4j/cypher/03_validate.cypher`
+- `kg/neo4j/cypher/04_graphrag_indexes.cypher`
 
----
+Import is expected to load the **validated enriched TTL** artifact.
 
-## 4) Azure ML pipelines (optional)
+## 7) GraphRAG indexing job (optional)
+- `deploy/azure_fabric/jobs/graphrag_index/`
 
-If you add ML scoring/training, use AML pipelines.
+Runs on schedule to index documents to Neo4j.
 
-Docs:
-```text
-https://learn.microsoft.com/en-us/azure/machine-learning/tutorial-pipeline-python-sdk?view=azureml-api-2
-https://learn.microsoft.com/en-us/azure/machine-learning/reference-yaml-job-pipeline?view=azureml-api-2
-```
+## 8) Secrets + identity (Key Vault)
+Use Terraform placeholders under `infra/azure/terraform/modules/`:
+- Key Vault
+- Managed identity + role assignments
 
-A minimal YAML example is in:
-- `deploy/azure_fabric/aml/pipeline_job.yml`
-
----
-
-## 5) Neo4j deployment notes
-
-Production options:
-- AKS
-- VM
-- Container Apps
-
-Must-haves:
-- persistent storage for `/data`
-- mounted import directory for `/var/lib/neo4j/import`
-- n10s procedures allowlist/unrestricted
+At minimum store:
+- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
+- optional: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`
