@@ -1,0 +1,38 @@
+version: 1
+gold_sources:
+  customers: "dim_customer.csv"
+  contracts: "f_contract_retail.csv"
+  payments: "f_payment.csv"
+
+nodes:
+  - label: Customer
+    table: customers
+    id_column: customer_key
+    properties: ["customer_key", "segment"]
+
+  - label: Contract
+    table: contracts
+    id_column: contract_key
+    properties: ["contract_key", "approved_amount", "interest_rate", "term_months"]
+
+  - label: Payment
+    table: payments
+    id_column: payment_key
+    properties: ["payment_key", "paid_amount", "scheduled_amount", "dpd_at_payment"]
+
+edges:
+  - type: HAS_CUSTOMER
+    table: contracts
+    from_label: Contract
+    from_id_column: contract_key
+    to_label: Customer
+    to_id_column: customer_key
+    properties: []
+
+  - type: HAS_PAYMENT
+    table: payments
+    from_label: Payment
+    from_id_column: payment_key
+    to_label: Contract
+    to_id_column: contract_key
+    properties: []
