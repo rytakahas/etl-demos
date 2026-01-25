@@ -3,5 +3,13 @@ google-cloud-bigquery>=3.17.0
 pandas>=2.1.0
 neo4j>=5.20.0
 rdflib>=7.0.0
-pyshacl
+pyshacl>=0.26
+
+networkx>=3.2
+pydantic>=2.0
+pyyaml>=6.0
+langgraph>=0.2
+langchain-core>=0.2
+fastapi>=0.110
+uvicorn>=0.27
 
