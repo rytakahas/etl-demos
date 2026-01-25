@@ -1,22 +1,27 @@
-# Job Trigger Service (optional)
+# Job Trigger Service (production-ready)
 
-This is a small HTTP service intended to be called from **Fabric Data Factory Web Activity**.
-It triggers an external runner (typically an **Azure Container Apps Job**) with parameters (run_id, paths).
+This service is called from **Fabric Data Factory Web Activity**.
+It starts an **Azure Container Apps Job** execution via Azure Resource Manager REST.
 
-Why this exists:
-- Some orgs prefer Fabric to call a *stable internal endpoint* (API Gateway), not Azure control-plane APIs directly.
-- You can enforce allowlists, auth, logging, and idempotency.
+## Endpoints
+- `GET /health`
+- `POST /trigger/kg-export`
 
-## What it does
-- `POST /trigger/kg-export` with JSON payload:
-  - `run_id`
-  - `kgd_export_path`
-  - `out_path`
-- Validates payload against allowlist rules
-- Starts the runner (placeholder in this template)
+## Required env vars
+- `ACA_SUBSCRIPTION_ID`
+- `ACA_RESOURCE_GROUP`
+- `ACA_JOB_NAME`
 
-## Production notes
-- Use Managed Identity for Azure calls.
-- Read subscription/resource group/job name from env.
-- Validate inputs with strict allowlists.
-- Record an audit log per trigger request.
+## Optional env vars
+- `ACA_API_VERSION` (default: 2025-07-01)
+- `ALLOWED_KGD_PREFIX` (default: onelake://)
+- `ALLOWED_OUT_PREFIX` (default: onelake://)
+- `APPLY_ENV_OVERRIDES` (default: 1)
+- `RUN_ID_ENV` (default: RUN_ID)
+- `KGD_EXPORT_PATH_ENV` (default: KGD_EXPORT_PATH)
+- `OUT_PATH_ENV` (default: OUT_PATH)
+
+## Identity / permissions
+Run this service as a Container App with **Managed Identity**.
+Grant that identity **Contributor** on the Container Apps Job resource:
+`/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.App/jobs/<jobName>`
