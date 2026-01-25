@@ -1,105 +1,65 @@
-# Azure / Microsoft Fabric deployment runbook (Azure-first)
-
-This folder contains **deployment artifacts** to run the end-to-end pipeline in a **client tenant**:
-
-**ADLS/OneLake (Bronze) → Fabric Lakehouse/Warehouse (Silver/Gold) → KGD tables → RDF export (TTL) → TTL+SHACL gates → Neo4j (n10s import) → GraphRAG indexes**
-
-> This repo avoids hardcoding tenant IDs / workspace IDs. Put environment-specific values in Key Vault or CI/CD secrets.
-
----
-
-## 0) What is the contract (versioned API)
-
-- Ontology (TBox): `kg/ontology/hb_bank.ttl`
-- SHACL constraints: `kg/shacl/hb_bank.shapes.ttl`
-- Quality gates: `kg/validation/validate_ttl.py`, `kg/validation/validate_shacl.py`
-- Neo4j migrations/import: `kg/neo4j/cypher/00..04_*.cypher`
-- Export + enrich: `kg/export/export_bank_kg_data_ttl.py`, `kg/export/enrich_bank_data_ttl.py`, `kg/config/enrichment_rules.yaml`
-
-These files should be reviewed like an API.
-
----
-
-## 1) Fabric workspace (GitOps)
-
-1. Create Fabric workspaces: **dev / test / prod** (or just dev first).
-2. Enable Fabric Git integration and connect the **dev workspace** to this repo/branch.
-3. Import/author the Fabric items under `deploy/azure_fabric/fabric/`:
-   - pipelines (Data Factory)
-   - notebooks (Spark)
-   - SQL scripts (Warehouse)
-
-> Execution is usually via **schedule/event triggers** in Fabric. Use REST APIs mainly for inventory/monitoring.
-
----
-
-## 2) What you run (end-to-end)
+# Azure/Fabric automation: how it runs end-to-end (no manual clicking per run)
 
 There are **two orchestration layers**:
 
-### A) Fabric pipeline (Bronze → Silver → Gold → KGD)
+## Layer A — Fabric pipeline (Bronze → Silver → Gold → KGD)
+Runs **inside Fabric** on:
+- a **schedule trigger** (hourly/daily), or
+- an **event trigger** (file arrival) once configured.
 
-Runs inside Fabric via **schedule/event trigger** (no manual clicking after setup).
+**Fabric pipeline responsibilities**
+1. Bronze ingest (ADLS/OneLake → Bronze tables/files)
+2. Silver transforms (clean + conform types, dedupe)
+3. Gold marts (warehouse SQL/dbt-style tables)
+4. KGD refresh (create/refresh `kg_node_*` and `kg_edge_*`)
+5. Export KGD to OneLake files (recommended) so Python jobs can read them
 
-### B) Container Apps Job (RDF export → validate → Neo4j load)
+## Layer B — Container Apps Job (RDF export → validate → Neo4j load)
+Runs your repo code **outside Fabric** as an Azure job:
+- export raw TTL
+- enrich TTL (config-driven)
+- TTL lint + SHACL (quality gates)
+- Neo4j load via n10s + cypher migrations
+- post-load Neo4j DQ + GraphRAG indexes
 
-Runs your repo's Python + Neo4j cypher steps. It is triggered:
-- either by **Fabric pipeline Web Activity** (recommended),
-- or by a **separate schedule** (acceptable if the KGD refresh is predictable).
+**How it is triggered**
+- Recommended: Fabric pipeline **Web Activity** calls an HTTP endpoint that triggers the Container Apps Job.
+- Alternative: schedule the Container Apps Job (e.g., run 10 minutes after Gold/KGD refresh).
 
 ---
 
-## 3) Data landing (Bronze)
+## Step-by-step Azure/Fabric setup (Ops runbook)
 
-Raw files arrive in ADLS Gen2 (or OneLake) paths like:
+### 1) Fabric GitOps setup (one-time)
+1. Create Fabric workspaces: dev/test/prod (or dev first).
+2. Connect **dev workspace** to this repo branch (Fabric Git integration).
+3. Create or import Fabric items (pipelines/notebooks/sql). See:
+   - `deploy/azure_fabric/fabric/`
+   - `deploy/azure_fabric/sql/`
+
+> The repo includes placeholders/templates. In a real tenant you fill them with workspace-specific values.
+
+### 2) Data landing (Bronze)
+Raw files land in ADLS/OneLake:
 - `.../bank/raw/payments/dt=YYYY-MM-DD/*.parquet`
 
-Trigger options (choose one):
-- **Event trigger** (file arrival) OR
-- **Schedule trigger** (hourly/daily)
+### 3) Fabric pipeline runs Bronze→Silver→Gold→KGD
+- schedule/event trigger starts pipeline automatically
+- pipeline refreshes marts and KGD
 
----
+### 4) KGD export handoff (recommended)
+Fabric writes KGD extracts to OneLake:
+- `.../Files/kgd/<run_id>/nodes/*.parquet`
+- `.../Files/kgd/<run_id>/edges/*.parquet`
 
-## 4) Silver/Gold in Fabric
+This becomes the stable input to the Python KG job.
 
-- Bronze → Silver: notebooks/pipelines parse, dedupe, conform.
-- Silver → Gold: Warehouse SQL (or dbt-in-container) builds marts.
+### 5) Build and publish the KG runner image (one-time, CI/CD)
+Runner image lives under:
+- `deploy/azure_fabric/jobs/kg_export_validate_load/`
 
-See:
-- `deploy/azure_fabric/sql/gold_marts/`
-- `deploy/azure_fabric/sql/kgd/`
-
----
-
-## 5) KGD tables (graph export layer)
-
-Create graph-ready tables/views from Gold (idempotent, stable IDs):
-
-- Nodes: `kg_node_customer`, `kg_node_contract`, `kg_node_payment`, `kg_node_default_event`, ...
-- Edges: `kg_edge_contract_has_customer`, `kg_edge_contract_has_payment`, ...
-
-**Goal:** produce stable node IDs and edge endpoints so the export is repeatable.
-
----
-
-## 6) How to run the pipeline (step-by-step)
-
-### Step 1 — Build and publish the KG runner image (one-time, CI/CD)
-
-Your runner image executes:
-- export TTL
-- enrich TTL
-- validate TTL + SHACL
-- load into Neo4j (n10s + constraints/indexes)
-
-Files:
-- `deploy/azure_fabric/jobs/kg_export_validate_load/Dockerfile`
-- `deploy/azure_fabric/jobs/kg_export_validate_load/run.sh`
-
-Example (CI/CD): build and push to ACR
-
+Example:
 ```bash
-# Example only: adapt to your ACR and CI
 ACR_NAME=<your-acr>
 IMAGE_TAG=rc-1.1.0
 
@@ -108,103 +68,104 @@ docker build -f deploy/azure_fabric/jobs/kg_export_validate_load/Dockerfile -t $
 docker push $ACR_NAME.azurecr.io/bank-kg-export:$IMAGE_TAG
 ```
 
-### Step 2 — Create Key Vault secrets (one-time)
-
+### 6) Create Key Vault secrets (one-time)
 Store:
-- `NEO4J_URI`
-- `NEO4J_USER`
-- `NEO4J_PASSWORD`
-- (optional) `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`
+- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DB`
+- optional: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`
 
 Terraform placeholders:
 - `infra/azure/terraform/modules/keyvault/`
 - `infra/azure/terraform/modules/managed_identity/`
 
-### Step 3 — Create the Container Apps Job (one-time)
-
-Template:
+### 7) Create Container Apps Job (one-time)
+Template/spec:
 - `deploy/azure_fabric/jobs/kg_export_validate_load/job.yaml`
 - `deploy/azure_fabric/jobs/kg_export_validate_load/env.template`
 
-In production you will:
-- create a Container Apps Environment
-- create the Job pointing to the ACR image
-- mount inputs (KGD export dir) and outputs (TTL reports)
-- inject secrets from Key Vault into env vars
+Job expects:
+- `GOLD_DIR` (mounted path to KGD extracts) OR connection details to read from OneLake
+- `OUT_DIR` (where TTL + reports are written)
+- `NEO4J_*` creds from Key Vault
 
-The job expects:
-- `GOLD_DIR` = mounted path where KGD/gold extracts are available
-- `OUT_DIR` = mounted output directory for TTL + reports
-- `NEO4J_*` = Neo4j credentials (from Key Vault)
-
-### Step 4 — Wire Fabric pipeline to trigger the job (recommended)
-
-In Fabric Data Factory pipeline:
-
-Add activities:
-1. Bronze ingest
-2. Silver transform (notebook)
-3. Gold marts (SQL)
-4. KGD refresh (SQL)
-
-Add a Web Activity at the end:
-- URL: your "job trigger" endpoint (or the Container Apps Job trigger endpoint, depending on how you implement it)
-- Body: include `run_date`, `kgd_export_path`, etc.
-
-This gives true "new data arrives → full KG refresh" automation.
-
-### Step 5 — Set the trigger (one-time)
-
-Choose:
-- event trigger (file arrival), or
-- scheduled trigger.
-
-After this, no manual clicking is required.
+### 8) Wire Fabric → Job trigger (recommended)
+In the Fabric pipeline, add a final Web Activity that calls your job trigger endpoint and passes:
+- `run_id`
+- `kgd_export_path` (OneLake folder)
+- `out_path` (artifact folder)
+- optional flags (dry run)
 
 ---
 
-## 7) Neo4j load + post-load checks
-
-The job runs:
+## Neo4j load & validation (what runs)
+The job executes, in order:
 1. `kg/neo4j/cypher/00_constraints.cypher`
 2. `kg/neo4j/cypher/01_n10s_init.cypher`
-3. `kg/neo4j/cypher/02_import_ontology_and_data.cypher`
+3. `kg/neo4j/cypher/02_import_ontology_and_data.cypher` (imports enriched TTL)
 4. `kg/neo4j/cypher/03_validate.cypher`
 5. `kg/neo4j/cypher/04_graphrag_indexes.cypher`
 
-Import must load the validated enriched TTL artifact.
-
 ---
 
-## 8) GraphRAG indexing job (optional)
-
-If you also want doc indexing:
+## GraphRAG doc indexing (optional)
+If you want doc indexing:
 - `deploy/azure_fabric/jobs/graphrag_index/`
 
-Steps:
-1. Build/push `bank-kg-graphrag` image
-2. Create Container Apps Job
-3. Schedule it (daily/hourly)
-4. Job runs `kg/graphrag/index_graphrag_docs.py`
+This job can be scheduled daily/hourly to:
+- chunk docs → embeddings → store Document/Chunk nodes in Neo4j
+- link chunks to entities
+- refresh indexes if needed
 
 ---
 
-## 9) Where the outputs are written
+## Outputs (recommended storage locations)
 
-Recommended output locations in OneLake/ADLS:
-- `.../kg/artifacts/hb_bank_data.ttl`
-- `.../kg/artifacts/hb_bank_enriched.ttl`
-- `.../kg/artifacts/ttl_report.json`
-- `.../kg/artifacts/shacl_report.ttl`
+**Artifacts (OneLake/ADLS):**
+- `.../kg/artifacts/<run_id>/hb_bank_data.ttl`
+- `.../kg/artifacts/<run_id>/hb_bank_enriched.ttl`
+- `.../kg/artifacts/<run_id>/ttl_report.json`
+- `.../kg/artifacts/<run_id>/shacl_report.ttl`
 
-And in Neo4j:
+**Neo4j:**
+- validated graph imported
 - constraints/indexes applied
 - GraphRAG indexes created
 
 ---
 
-## 10) Troubleshooting
+## Local development mode (for dev only)
+Use local CSV under `data/` + Neo4j Docker to validate logic.  
+This is not the deployment target; it is for dev/test parity.
 
-- **If SHACL fails:** inspect the SHACL report (`shacl_report.ttl`) and update `kg/config/enrichment_rules.yaml` or shapes.
-- **If Neo4j import fails:** check `02_import_ontology_and_data.cypher` paths and Neo4j import directory mapping.
-- **If triggers don't fire:** verify Fabric trigger settings and storage/event wiring.
+---
+
+## What is still missing for fully automated Azure execution?
+
+Your KG logic is present. What's missing is tenant-specific "execution wiring":
+
+### Real Fabric items (not placeholders)
+- actual pipeline definitions
+- real notebooks
+- real Warehouse SQL scripts for Gold + KGD
+
+### A real trigger endpoint for Container Apps Job (if required by your org)
+- some orgs wrap job execution behind an internal API gateway
+
+### CI/CD that deploys Fabric assets + jobs
+GitHub Actions or Azure DevOps pipeline:
+- build/push ACR images
+- deploy/update Container Apps Jobs
+- sync Git branch → Fabric workspace and promote dev/test/prod
+
+### Key Vault role assignments
+managed identity permissions for:
+- reading OneLake/ADLS
+- reading Key Vault secrets
+- connecting to Neo4j (network allowlist/VNet rules)
+
+---
+
+## Troubleshooting
+
+- **SHACL fails**: inspect SHACL report and adjust `kg/config/enrichment_rules.yaml` first.
+- **Neo4j import fails**: verify n10s config and import paths.
+- **Port conflicts (local only)**: ensure only one Neo4j instance binds the host port.
