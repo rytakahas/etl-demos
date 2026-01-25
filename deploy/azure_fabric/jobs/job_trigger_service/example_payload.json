@@ -1,0 +1,5 @@
+{
+  "run_id": "2026-01-23T00:00:00Z",
+  "kgd_export_path": "onelake://<workspace>/<lakehouse>/Files/kgd/2026-01-23/",
+  "out_path": "onelake://<workspace>/<lakehouse>/Files/kg_artifacts/2026-01-23/"
+}
