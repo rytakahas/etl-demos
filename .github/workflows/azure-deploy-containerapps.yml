@@ -1,0 +1,82 @@
+name: Azure Deploy (Container Apps)
+
+on:
+  push:
+    branches: ["feat/azure", "rc/**", "main"]
+  workflow_dispatch:
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install containerapp extension
+        run: |
+          az extension add --name containerapp --upgrade
+          az provider register --namespace Microsoft.App || true
+
+      - name: ACR login
+        run: |
+          az acr login -n "${{ secrets.ACR_NAME }}"
+
+      - name: Build & push images
+        run: |
+          set -euo pipefail
+          TAG="${{ github.sha }}"
+          ACR="${{ secrets.ACR_NAME }}.azurecr.io"
+
+          docker build -f deploy/azure_fabric/jobs/kg_export_validate_load/Dockerfile -t "$ACR/bank-kg-export:$TAG" .
+          docker push "$ACR/bank-kg-export:$TAG"
+
+          docker build -f deploy/azure_fabric/jobs/graphrag_index/Dockerfile -t "$ACR/bank-kg-graphrag:$TAG" .
+          docker push "$ACR/bank-kg-graphrag:$TAG"
+
+          docker build -f deploy/azure_fabric/jobs/job_trigger_service/Dockerfile -t "$ACR/bank-kg-trigger:$TAG" .
+          docker push "$ACR/bank-kg-trigger:$TAG"
+
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "ACR=$ACR" >> $GITHUB_ENV
+
+      - name: Create/update Container Apps Job (bank-kg-export-validate-load)
+        run: |
+          set -euo pipefail
+          RG="${{ secrets.ACA_RESOURCE_GROUP }}"
+          ENV="${{ secrets.ACA_ENV_NAME }}"
+          JOB="bank-kg-export-validate-load"
+
+          if ! az containerapp job show -g "$RG" -n "$JOB" >/dev/null 2>&1; then
+            az containerapp job create -g "$RG" -n "$JOB" --environment "$ENV"               --trigger-type Manual               --image "$ACR/bank-kg-export:$TAG"               --cpu 0.5 --memory 1Gi
+          else
+            az containerapp job update -g "$RG" -n "$JOB"               --image "$ACR/bank-kg-export:$TAG"
+          fi
+
+      - name: Create/update Container App (trigger service)
+        run: |
+          set -euo pipefail
+          RG="${{ secrets.ACA_RESOURCE_GROUP }}"
+          ENV="${{ secrets.ACA_ENV_NAME }}"
+          APP="bank-kg-trigger-svc"
+
+          if ! az containerapp show -g "$RG" -n "$APP" >/dev/null 2>&1; then
+            az containerapp create -g "$RG" -n "$APP" --environment "$ENV"               --image "$ACR/bank-kg-trigger:$TAG"               --ingress external --target-port 8080               --cpu 0.25 --memory 0.5Gi
+          else
+            az containerapp update -g "$RG" -n "$APP"               --image "$ACR/bank-kg-trigger:$TAG"
+          fi
+
+      - name: Print deployed resources
+        run: |
+          echo "Deployed images tag: $TAG"
+          echo "Job: bank-kg-export-validate-load"
+          echo "Trigger service: bank-kg-trigger-svc"

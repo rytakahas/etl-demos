@@ -1,0 +1,23 @@
+$schema: https://azuremlschemasprod.azureedge.net/latest/pipelineJob.schema.json
+type: pipeline
+description: Bank KG pipeline (skeleton): export -> validate (client tenant)
+
+settings:
+  default_compute: azureml:cpu-cluster
+
+jobs:
+  export_ttl:
+    type: command
+    code: ../../../
+    command: >
+      python kg/export/export_bank_kg_data_ttl.py --data-dir data --out ./hb_bank_data.ttl
+    environment: azureml:bankkg-env@latest
+
+  shacl_validate:
+    type: command
+    code: ../../../
+    command: >
+      python -m pyshacl -s kg/shacl/bank_shapes.ttl -d ./hb_bank_data.ttl
+    environment: azureml:bankkg-env@latest
+    depends_on:
+      - export_ttl
