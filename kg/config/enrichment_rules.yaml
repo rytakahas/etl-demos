@@ -1,0 +1,45 @@
+base_iri: "https://example.org/honda-bank/kg#"
+
+rules:
+  - name: ensure_unknown_customer
+    type: ensure_node
+    class: Customer
+    id: UNKNOWN
+    literals:
+      customerKey: { value: "UNKNOWN", datatype: xsd:string }
+
+  - name: contract_missing_customer
+    type: ensure_object
+    subject_class: Contract
+    predicate: hasCustomer
+    object_class: Customer
+    object_id: UNKNOWN
+
+  - name: payment_amountPaid
+    type: ensure_datatype_alias
+    subject_class: Payment
+    target_predicate: amountPaid
+    source_predicates: [paidAmount, scheduledAmount]
+    datatype: xsd:decimal
+    default: "0.00"
+
+  - name: payment_daysPastDue
+    type: ensure_datatype_alias
+    subject_class: Payment
+    target_predicate: daysPastDue
+    source_predicates: [dpdAtPayment]
+    datatype: xsd:integer
+
+  - name: vehicle_model
+    type: ensure_datatype_alias
+    subject_class: Vehicle
+    target_predicate: model
+    source_predicates: [vehicleModel]
+    datatype: xsd:string
+
+  - name: default_event_eventType
+    type: ensure_datatype_default
+    subject_class: DefaultEvent
+    predicate: eventType
+    datatype: xsd:string
+    default: "Default"

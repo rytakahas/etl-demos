@@ -4,27 +4,40 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./kg/neo4j/import:/usr/local/airflow/kg/neo4j/import
+      # Keep your repo KG artifacts visible inside Airflow
+      - ./kg:/usr/local/airflow/kg
 
-  # Neo4j as an extra service
+  # Neo4j as an extra service (used by Airflow DAG)
   neo4j:
     image: neo4j:5
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "7475:7474"   # host:container (Browser)
+      - "7688:7687"   # host:container (Bolt)
     environment:
-      NEO4J_AUTH: "neo4j/password"
-      NEO4JLABS_PLUGINS: '["n10s"]'
+      # IMPORTANT: must match your .env NEO4J_PASSWORD
+      NEO4J_AUTH: "neo4j/Password123!"
+
+      # Neo4j 5+ uses NEO4J_PLUGINS (NEO4JLABS_PLUGINS still works but is deprecated)
+      NEO4J_PLUGINS: '["n10s"]'
+
       NEO4J_server_memory_heap_initial__size: "512m"
       NEO4J_server_memory_heap_max__size: "512m"
       NEO4J_server_memory_pagecache_size: "512m"
+
+      # Allow n10s procedures
+      NEO4J_dbms_security_procedures_unrestricted: "n10s.*,semantics.*"
+      NEO4J_dbms_security_procedures_allowlist: "n10s.*,semantics.*"
+
     volumes:
       - ./kg/neo4j/import:/var/lib/neo4j/import
       - ./kg/neo4j/plugins:/plugins
       - ./kg/neo4j/data:/data
       - ./kg/neo4j/logs:/logs
+
     healthcheck:
+      # Inside container it is 7474, NOT 7475
       test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
+

@@ -10,20 +10,35 @@ from airflow import DAG
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from neo4j import GraphDatabase
-from neo4j.exceptions import ClientError
+from neo4j.exceptions import ClientError, AuthError
 
 
 # -----------------------------------------------------------------------------
-# Neo4j connection
+# Neo4j connection (Astro Neo4j in docker-compose.override.yml maps host 7688 -> container 7687)
 # -----------------------------------------------------------------------------
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://host.docker.internal:7687")
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://host.docker.internal:7688")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")  # must match NEO4J_AUTH
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "Password123!")  # MUST match NEO4J_AUTH in compose
+NEO4J_DATABASE = os.getenv("NEO4J_DB", "neo4j")               # use NEO4J_DB consistently
 
 # Repo paths inside Astro containers
 REPO_ROOT = Path("/usr/local/airflow")
 CYPHER_DIR = REPO_ROOT / "kg" / "neo4j" / "cypher"
+
+# Artifacts written for Neo4j import (these paths map to /var/lib/neo4j/import via compose bind mount)
+RAW_TTL = "kg/neo4j/import/hb_bank_data.ttl"
+ENR_TTL = "kg/neo4j/import/hb_bank_enriched.ttl"
+ONTO_TTL = "kg/neo4j/import/hb_bank.ttl"
+
+# SHACL shapes (keep legacy default for compatibility; you can switch to hb_bank.shapes.ttl if you want)
+SHAPES_TTL = os.getenv("SHAPES_TTL", "kg/shacl/bank_shapes.ttl")
+
+# Optional: NetworkX DQ gate (enable only if deps exist in Airflow image)
+ENABLE_NETWORKX_DQ = os.getenv("ENABLE_NETWORKX_DQ", "0") == "1"
+NETWORKX_SPEC = os.getenv("NETWORKX_SPEC", "src/bankkg/kgd_networkx/kgspec.example.yaml")
+NETWORKX_GOLD_DIR = os.getenv("NETWORKX_GOLD_DIR", "data")
+NETWORKX_OUT_DIR = os.getenv("NETWORKX_OUT_DIR", "kg/export/kgd_out")
+NETWORKX_POLICY = os.getenv("NETWORKX_POLICY", "kg/config/kgd_policy.yaml")
 
 
 def neo4j_driver():
@@ -31,7 +46,7 @@ def neo4j_driver():
 
 
 def wait_for_neo4j(timeout_s: int = 300) -> None:
-    """Wait until Neo4j Bolt is reachable + auth works."""
+    """Wait until Neo4j Bolt is reachable + auth works (fail fast on auth errors)."""
     deadline = time.time() + timeout_s
     last_err = None
 
@@ -44,8 +59,15 @@ def wait_for_neo4j(timeout_s: int = 300) -> None:
             driver.close()
             print(f"Neo4j connectivity OK: uri={NEO4J_URI}, db={NEO4J_DATABASE}")
             return
+
+        except AuthError as e:
+            # FAIL FAST: wrong password/user (avoid lockouts)
+            raise RuntimeError(
+                f"Neo4j auth failed: uri={NEO4J_URI} user={NEO4J_USER} db={NEO4J_DATABASE}"
+            ) from e
+
         except Exception as e:
-            last_err = repr(e)
+            last_err = f"{type(e).__name__} code={getattr(e,'code',None)} msg={str(e)}"
             print(f"Neo4j not ready yet: {last_err}")
             time.sleep(5)
 
@@ -53,10 +75,7 @@ def wait_for_neo4j(timeout_s: int = 300) -> None:
 
 
 def run_cypher_file(path: Path, *, ignore_n10s_nonempty: bool = False) -> None:
-    """
-    Execute a .cypher file, splitting on semicolons.
-    Also prints any returned rows (so you can see triplesLoaded/triplesParsed in logs).
-    """
+    """Execute a .cypher file, splitting on semicolons; prints returned rows."""
     cypher = path.read_text(encoding="utf-8")
     statements = [s.strip() for s in cypher.split(";") if s.strip()]
 
@@ -67,7 +86,6 @@ def run_cypher_file(path: Path, *, ignore_n10s_nonempty: bool = False) -> None:
                 try:
                     res = sess.run(stmt)
 
-                    # Print results if any (helps for n10s import calls)
                     rows = res.data()
                     if rows:
                         print(f"[Cypher result] {path.name} :: {rows[:5]}")
@@ -78,7 +96,7 @@ def run_cypher_file(path: Path, *, ignore_n10s_nonempty: bool = False) -> None:
                     msg = str(e)
                     code = getattr(e, "code", None)
 
-                    # Make n10s init idempotent: if graph is not empty, skip init.
+                    # Make n10s init idempotent
                     if (
                         ignore_n10s_nonempty
                         and "n10s.graphconfig.init" in stmt
@@ -97,6 +115,7 @@ def run_cypher_file(path: Path, *, ignore_n10s_nonempty: bool = False) -> None:
 
 
 def validate_graph_and_write_visualize() -> None:
+    """Post-load operational validation: ensure graph is non-empty and provide a helper query."""
     driver = neo4j_driver()
     try:
         with driver.session(database=NEO4J_DATABASE) as sess:
@@ -122,10 +141,7 @@ def validate_graph_and_write_visualize() -> None:
     print(f"wrote {out}")
 
 
-default_args = {
-    "retries": 5,
-    "retry_delay": timedelta(seconds=20),
-}
+default_args = {"retries": 5, "retry_delay": timedelta(seconds=20)}
 
 with DAG(
     dag_id="bank_kg_rdf_load",
@@ -143,7 +159,25 @@ with DAG(
         bash_command="dbt build --profiles-dir .",
     )
 
-    # 2) Export RDF data graph (Turtle)
+    # 1.5) Optional: NetworkX DQ gate (pre-load analytics checks)
+    # Enable by setting ENABLE_NETWORKX_DQ=1 and ensuring deps are in requirements.airflow.txt
+    if ENABLE_NETWORKX_DQ:
+        networkx_dq_gate = BashOperator(
+            task_id="networkx_dq_gate",
+            cwd=str(REPO_ROOT),
+            bash_command=(
+                f"PYTHONPATH=src python -m bankkg.kgd_networkx.cli "
+                f"--spec {NETWORKX_SPEC} "
+                f"--gold-dir {NETWORKX_GOLD_DIR} "
+                f"--out-dir {NETWORKX_OUT_DIR} "
+                f"--policy {NETWORKX_POLICY} "
+                f"--fail-on-violation"
+            ),
+        )
+    else:
+        networkx_dq_gate = None
+
+    # 2) Export RDF data graph (raw TTL)
     export_ttl = BashOperator(
         task_id="export_ttl",
         cwd=str(REPO_ROOT),
@@ -151,34 +185,40 @@ with DAG(
             "mkdir -p kg/neo4j/import && chmod 777 kg/neo4j/import && "
             "python kg/export/export_bank_kg_data_ttl.py "
             "--data-dir data "
-            "--out kg/neo4j/import/hb_bank_data.ttl"
+            f"--out {RAW_TTL}"
         ),
     )
 
-    patch_ttl = BashOperator(
-        task_id="patch_ttl_missing_customer",
+    # 2.5) Enrich (config-driven) -> enriched TTL
+    enrich_ttl = BashOperator(
+        task_id="enrich_ttl",
         cwd=str(REPO_ROOT),
-        bash_command="python kg/export/patch_missing_hasCustomer.py",
+        bash_command=(
+            "python kg/export/enrich_bank_data_ttl.py "
+            "--config kg/config/enrichment_rules.yaml "
+            f"--in  {RAW_TTL} "
+            f"--out {ENR_TTL}"
+        ),
     )
 
-    # 3) SHACL validate exported Turtle (quality gate)
+    # 3) SHACL validate ENRICHED TTL (quality gate)
     shacl_validate = BashOperator(
         task_id="shacl_validate",
         cwd=str(REPO_ROOT),
         bash_command=(
             "python -m pyshacl "
-            "-s kg/shacl/bank_shapes.ttl "
-            "-d kg/neo4j/import/hb_bank_data.ttl"
+            f"-s {SHAPES_TTL} "
+            f"-d {ENR_TTL}"
         ),
     )
 
-    # 4) Copy ontology into Neo4j import folder
+    # 4) Copy ontology into Neo4j import folder (so n10s can import via file:///var/lib/neo4j/import/...)
     copy_ontology = BashOperator(
         task_id="copy_ontology_to_import",
         cwd=str(REPO_ROOT),
         bash_command=(
             "mkdir -p kg/neo4j/import && chmod 777 kg/neo4j/import && "
-            "cp -f kg/ontology/hb_bank.ttl kg/neo4j/import/hb_bank.ttl"
+            f"cp -f kg/ontology/hb_bank.ttl {ONTO_TTL}"
         ),
     )
 
@@ -203,7 +243,7 @@ with DAG(
         ),
     )
 
-    # 8) Import ontology + data (this will now print triplesLoaded/triplesParsed in logs)
+    # 8) Import ontology + enriched data
     neo4j_import = PythonOperator(
         task_id="neo4j_import",
         python_callable=lambda: run_cypher_file(CYPHER_DIR / "02_import_ontology_and_data.cypher"),
@@ -215,15 +255,31 @@ with DAG(
         python_callable=validate_graph_and_write_visualize,
     )
 
-    (
-        dbt_build
-        >> export_ttl
-        >> patch_ttl
-        >> shacl_validate
-        >> copy_ontology
-        >> wait_neo4j
-        >> neo4j_constraints
-        >> neo4j_n10s_init
-        >> neo4j_import
-        >> neo4j_validate
-    )
+    # Chain
+    if networkx_dq_gate:
+        (
+            dbt_build
+            >> networkx_dq_gate
+            >> export_ttl
+            >> enrich_ttl
+            >> shacl_validate
+            >> copy_ontology
+            >> wait_neo4j
+            >> neo4j_constraints
+            >> neo4j_n10s_init
+            >> neo4j_import
+            >> neo4j_validate
+        )
+    else:
+        (
+            dbt_build
+            >> export_ttl
+            >> enrich_ttl
+            >> shacl_validate
+            >> copy_ontology
+            >> wait_neo4j
+            >> neo4j_constraints
+            >> neo4j_n10s_init
+            >> neo4j_import
+            >> neo4j_validate
+        )

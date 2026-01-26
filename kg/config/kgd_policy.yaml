@@ -1,0 +1,11 @@
+version: 1
+
+thresholds:
+  orphan_edges_pct_max: 0.001
+  unknown_node_pct_max: 0.01
+  supernode_degree_max: 5000
+  components_max: 50
+  largest_component_share_min: 0.80
+
+alerts:
+  fail_on_violation: true
