@@ -40,3 +40,25 @@ htmlcov/
 
 # Astro / Docker intermediate stuff (if present)
 .astro/
+
+cat >> .gitignore <<'EOF'
+
+# --- Neo4j local runtime (DO NOT COMMIT) ---
+kg/neo4j/data/
+kg/neo4j/logs/
+kg/neo4j/plugins/
+kg/neo4j/exports/
+kg/neo4j/import/*.dump
+*.dump
+
+# --- n8n local data ---
+**/.n8n/
+kg/ai_agents/**/data/
+kg/ai_agents/**/exports/
+
+# --- local env / secrets ---
+.env
+.env.*
+claude_desktop_config.json
+EOF
+
